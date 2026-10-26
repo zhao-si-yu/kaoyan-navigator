@@ -25,6 +25,8 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .state-card .desc { display: block; margin-top: 8px; font-size: 13px; color: #6b7280; line-height: 1.6; }
 .spinner { width: 28px; height: 28px; margin: 0 auto 14px; border: 3px solid #e5e8eb; border-top-color: #2f6fed; border-radius: 50%; animation: spin 0.8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.res-meta { font-size: 12.5px; color: #6b7280; margin: 2px 2px 10px; }
+.res-tip { text-align: center; font-size: 12.5px; color: #9ca3af; padding: 12px 0; }
 .result-card { padding: 14px 16px; background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; margin-bottom: 10px; cursor: pointer; }
 .result-card:hover { border-color: #2f6fed; }
 .rc-head { display: flex; justify-content: space-between; align-items: baseline; }
@@ -126,7 +128,7 @@ function summarize(rows) {
         major_code: latest.major_code, major_name: latest.major_name,
         study_mode: latest.study_mode, degree_type: latest.degree_type,
         yearCount: sorted.length,
-        yearRange: sorted[sorted.length - 1].year + '-' + latest.year,
+        yearRange: sorted.length > 1 ? (sorted[sorted.length - 1].year + '-' + latest.year) : (latest.year + ' 年'),
         latestYear: latest.year,
         latestReTestLine: toNumber(latest.retest_line),
         latestUnifiedQuota: toNumber(latest.unified_quota),
@@ -147,16 +149,19 @@ function mapYearRow(row) {
     };
 }
 
+var PAGE_SIZE = 100;   // 每次加载的原始记录行数
+var SEARCH = { kw: '', offset: 0, groups: [], loading: false, exhausted: false };
+
 var DS = {
-    search: function (keyword) {
+    page: function (keyword, offset, size) {
         var kw = String(keyword || '').trim();
         if (MODE === 'cloud') {
-            return cloudSearch(kw).catch(function (err) {
+            return cloudPage(kw, offset, size).catch(function (err) {
                 console.warn('云查询失败，降级到本地快照', err);
-                return snapshotSearch(kw);
+                return snapshotPage(kw, offset, size);
             });
         }
-        return snapshotSearch(kw);
+        return snapshotPage(kw, offset, size);
     },
     detail: function (key) {
         var parts = String(key).split('|');
@@ -178,15 +183,18 @@ var DS = {
     },
 };
 
-function cloudSearch(kw) {
+// 云端分页：offset 为原始记录行偏移，服务端只回传当页
+function cloudPage(kw, offset, size) {
     var q = cloud.database.from('kaoyan_records').select('*');
     if (kw) {
         q = q.or('school.ilike.%' + kw + '%,college.ilike.%' + kw + '%,major_name.ilike.%' + kw + '%,major_code.ilike.%' + kw + '%');
     }
-    return q.order('school').order('year', { ascending: false }).limit(500).then(function (res) {
-        if (res.error) throw res.error;
-        return groupRows(res.data || []);
-    });
+    return q.order('school').order('college').order('major_code').order('id')
+        .range(offset, offset + size - 1).then(function (res) {
+            if (res.error) throw res.error;
+            var rows = res.data || [];
+            return { groups: groupRows(rows), count: rows.length };
+        });
 }
 function cloudDetail(parts) {
     var match = { school: parts[0], college: parts[1], major_code: parts[2], major_name: parts[3], study_mode: parts[4] };
@@ -196,14 +204,16 @@ function cloudDetail(parts) {
             return wrapDetail(parts.join('|'), res.data || []);
         });
 }
-function snapshotSearch(kw) {
+// 快照分页：本地全量已加载，切片后再分组
+function snapshotPage(kw, offset, size) {
     return loadSnapshot().then(function (rows) {
         var hit = rows.filter(function (r) {
             if (!kw) return true;
             return (r.school || '').indexOf(kw) !== -1 || (r.college || '').indexOf(kw) !== -1
                 || (r.major_name || '').indexOf(kw) !== -1 || (r.major_code || '').indexOf(kw) !== -1;
         });
-        return groupRows(hit);
+        var slice = hit.slice(offset, offset + size);
+        return { groups: groupRows(slice), count: slice.length, total: hit.length };
     });
 }
 function snapshotDetail(parts) {
@@ -323,37 +333,93 @@ function renderIndex() {
     document.getElementById('go-fb').onclick = function () { nav('/feedback'); };
 
     var box = document.getElementById('results');
-    DS.search(lastKeyword).then(function (groups) {
-        if (!groups.length) {
-            box.innerHTML = '<div class="state-card"><span class="big">没有找到匹配的专业</span>' +
-                '<span class="desc">试试更短的关键词，例如「计算机」或「085404」。</span>' +
-                (MODE === 'cloud' ? '<button class="primary-btn" onclick="location.hash=\'/feedback?school=' + encodeURIComponent(lastKeyword) + '\'">反馈补充「' + esc(lastKeyword) + '」</button>' : '') +
-                '</div>';
-            return;
-        }
-        box.innerHTML = groups.map(function (g) {
-            return '<div class="result-card" data-key="' + esc(g.key) + '">' +
-                '<div class="rc-head"><span class="name">' + esc(g.major_name) + '</span><span class="code">' + esc(g.major_code) + '</span></div>' +
-                '<div class="rc-meta">' + esc(g.school) + ' · ' + esc(g.college) + '<span class="tag">' + esc(g.study_mode) + '/' + esc(g.degree_type) + '</span></div>' +
-                '<div class="rc-stats">' +
-                stat(g.latestReTestLine, g.latestYear + '复试线') +
-                stat(g.latestUnifiedQuota, g.latestYear + '统考名额') +
-                stat(g.latestRatio, '报录比') + '</div>' +
-                '<div class="rc-foot">' + esc(g.yearRange) + ' 共 ' + g.yearCount + ' 年数据 · 点击查看详情</div></div>';
-        }).join('');
-        Array.prototype.forEach.call(box.querySelectorAll('.result-card'), function (el) {
-            el.onclick = function () { nav('/detail?key=' + encodeURIComponent(el.getAttribute('data-key'))); };
-        });
-    }).catch(function (err) {
-        console.error(err);
-        box.innerHTML = '<div class="state-card"><span class="big">查询失败</span>' +
-            '<span class="desc">网络异常或服务暂不可用，请稍后重试。</span>' +
-            '<button class="primary-btn" onclick="location.reload()">重新加载</button></div>';
-    });
+    box.innerHTML = '<div id="res-meta" class="res-meta"></div>' +
+        '<div id="res-list"></div><div id="res-more"></div>';
+    SEARCH = { kw: lastKeyword, offset: 0, groups: [], loading: false, exhausted: false };
+    loadMore();
 
     function stat(v, label) {
         return '<div class="stat"><span class="v">' + (v === null ? '—' : esc(v)) + '</span><span class="l">' + esc(label) + '</span></div>';
     }
+}
+
+// ---------- 结果分页加载 ----------
+function resultCardHtml(g) {
+    return '<div class="result-card" data-key="' + esc(g.key) + '">' +
+        '<div class="rc-head"><span class="name">' + esc(g.major_name) + '</span><span class="code">' + esc(g.major_code) + '</span></div>' +
+        '<div class="rc-meta">' + esc(g.school) + ' · ' + esc(g.college) + '<span class="tag">' + esc(g.study_mode) + '/' + esc(g.degree_type) + '</span></div>' +
+        '<div class="rc-stats">' +
+        '<div class="stat"><span class="v">' + (g.latestReTestLine === null ? '—' : esc(g.latestReTestLine)) + '</span><span class="l">' + esc(g.latestYear + '复试线') + '</span></div>' +
+        '<div class="stat"><span class="v">' + (g.latestUnifiedQuota === null ? '—' : esc(g.latestUnifiedQuota)) + '</span><span class="l">' + esc(g.latestYear + '统考名额') + '</span></div>' +
+        '<div class="stat"><span class="v">' + (g.latestRatio === null ? '—' : esc(g.latestRatio)) + '</span><span class="l">报录比</span></div>' +
+        '</div>' +
+        '<div class="rc-foot">' + esc(g.yearRange) + ' · ' + g.yearCount + ' 年数据 · 点击查看详情</div></div>';
+}
+
+function bindCards(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('.result-card'), function (el) {
+        if (el.getAttribute('data-bound')) return;
+        el.setAttribute('data-bound', '1');
+        el.onclick = function () { nav('/detail?key=' + encodeURIComponent(el.getAttribute('data-key'))); };
+    });
+}
+
+function loadMore() {
+    if (SEARCH.loading || SEARCH.exhausted) return;
+    var list = document.getElementById('res-list');
+    var more = document.getElementById('res-more');
+    var meta = document.getElementById('res-meta');
+    if (!list) return;
+
+    SEARCH.loading = true;
+    if (more) more.innerHTML = '<div class="res-tip">加载中…</div>';
+
+    DS.page(SEARCH.kw, SEARCH.offset, PAGE_SIZE).then(function (res) {
+        SEARCH.loading = false;
+        var wrap = document.createElement('div');
+        wrap.innerHTML = res.groups.map(resultCardHtml).join('');
+        Array.prototype.forEach.call(wrap.children, function (el) { list.appendChild(el); });
+        bindCards(list);
+
+        SEARCH.offset += res.count;
+        SEARCH.groups = SEARCH.groups.concat(res.groups);
+        SEARCH.exhausted = res.count < PAGE_SIZE;
+
+        if (meta) {
+            meta.innerHTML = SEARCH.groups.length
+                ? ('已显示 ' + SEARCH.groups.length + ' 个专业方向' + (SEARCH.kw ? '，关键词「' + esc(SEARCH.kw) + '」' : '（全部院校）')
+                    + (typeof res.total === 'number' ? '，共 ' + res.total + ' 条记录' : ''))
+                : '';
+        }
+        if (!SEARCH.groups.length) {
+            if (more) more.innerHTML = '';
+            list.innerHTML = '<div class="state-card"><span class="big">没有找到匹配的专业</span>' +
+                '<span class="desc">试试更短的关键词，例如「计算机」或「085404」。</span>' +
+                (MODE === 'cloud' ? '<button class="primary-btn" onclick="location.hash=\'/feedback?school=' + encodeURIComponent(SEARCH.kw) + '\'">反馈补充「' + esc(SEARCH.kw) + '」</button>' : '') +
+                '</div>';
+            return;
+        }
+        if (more) {
+            more.innerHTML = SEARCH.exhausted
+                ? '<div class="res-tip">已经到底了 · 共 ' + SEARCH.groups.length + ' 个专业方向</div>'
+                : '<div style="text-align:center;padding:10px 0 4px"><button class="ghost-btn" id="load-more">加载更多</button></div>';
+            var btn = document.getElementById('load-more');
+            if (btn) btn.onclick = loadMore;
+        }
+    }).catch(function (err) {
+        console.error(err);
+        SEARCH.loading = false;
+        if (more) more.innerHTML = '';
+        if (!SEARCH.groups.length) {
+            list.innerHTML = '<div class="state-card"><span class="big">查询失败</span>' +
+                '<span class="desc">网络异常或服务暂不可用，请稍后重试。</span>' +
+                '<button class="primary-btn" onclick="location.reload()">重新加载</button></div>';
+        } else {
+            if (more) more.innerHTML = '<div style="text-align:center;padding:10px 0"><button class="ghost-btn" id="load-more">加载失败，点此重试</button></div>';
+            var b2 = document.getElementById('load-more');
+            if (b2) b2.onclick = loadMore;
+        }
+    });
 }
 
 function doSearch() {
