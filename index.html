@@ -24,6 +24,8 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .data-hint { font-size: 12px; line-height: 1.7; color: #6b7280; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 10px; padding: 9px 12px; margin-bottom: 14px; }
 .data-hint b { color: #374151; font-weight: 600; }
 .rc-stats .v.natl { color: #b45309; }
+.rc-stats .v.sch { color: #1d4ed8; }
+.line-tag { background: #eef4ff !important; color: #2f6fed !important; border-color: #c7d2fe !important; }
 .natl-strip { font-size: 12.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; line-height: 1.6; }
 .entry { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1.5px solid #e5e8eb; border-radius: 10px; background: #fff; font-size: 13.5px; cursor: pointer; color: #374151; }
 .entry.blue { background: #f0f5ff; border-color: #d6e2ff; color: #3a5fcc; }
@@ -163,6 +165,7 @@ function summarize(rows) {
         natl: natl,
         natlTotal: natl ? natl.totalA : null,
         natlTag: natl ? natl.tag : '',
+        schoolLine: findSchoolLine(latest.school, latest),
     };
 }
 function mapYearRow(row) {
@@ -234,16 +237,68 @@ function nationalLine(majorCode) {
 var PAGE_SIZE = 100;   // 每次加载的原始记录行数
 var SEARCH = { kw: '', offset: 0, groups: [], loading: false, exhausted: false };
 
+// ---------- 校线（院校自划线）索引：按学校缓存，卡片优先显示 ----------
+var ALL_LINES = null;
+function indexLines(rows) {
+    var box = {};
+    (rows || []).forEach(function (r) {
+        (box[r.school] = box[r.school] || []).push(r);
+    });
+    return box;
+}
+function loadAllLines() {
+    if (ALL_LINES) return Promise.resolve(ALL_LINES);
+    if (MODE === 'cloud') {
+        return cloud.database.from('kaoyan_school_lines').select('*').limit(3000)
+            .then(function (res) {
+                if (res.error) throw res.error;
+                ALL_LINES = indexLines(res.data);
+                return ALL_LINES;
+            }).catch(function (err) {
+                console.warn('校线预取失败', err);
+                ALL_LINES = {};
+                return ALL_LINES;
+            });
+    }
+    return loadLines().then(function (rows) {
+        ALL_LINES = indexLines(rows);
+        return ALL_LINES;
+    }).catch(function () { ALL_LINES = {}; return ALL_LINES; });
+}
+function findSchoolLine(school, row) {
+    var arr = (ALL_LINES && ALL_LINES[school]) || [];
+    if (!arr.length) return null;
+    var code = String(row.major_code || '');
+    var cat = CAT_CODES[code.slice(0, 2)];
+    var deg = row.degree_type || '';
+    var best = null, bestScore = 0;
+    for (var i = 0; i < arr.length; i++) {
+        var L = arr[i];
+        if (!L.total) continue;
+        var score = 0;
+        if (L.degree_type && deg && L.degree_type === deg) score += 2;
+        var lc = L.category || '';
+        if (cat && lc.indexOf(cat) === 0) score += 3;
+        else if (cat && lc.indexOf(cat) !== -1) score += 1;
+        var mc = String(L.major_code || '');
+        if (mc && code.indexOf(mc.slice(0, 4)) === 0) score += 4;
+        if (score > bestScore) { bestScore = score; best = L; }
+    }
+    return bestScore >= 3 ? best : null;
+}
+
 var DS = {
     page: function (keyword, offset, size) {
         var kw = String(keyword || '').trim();
-        if (MODE === 'cloud') {
-            return cloudPage(kw, offset, size).catch(function (err) {
-                console.warn('云查询失败，降级到本地快照', err);
-                return snapshotPage(kw, offset, size);
-            });
-        }
-        return snapshotPage(kw, offset, size);
+        return loadAllLines().then(function () {
+            if (MODE === 'cloud') {
+                return cloudPage(kw, offset, size).catch(function (err) {
+                    console.warn('云查询失败，降级到本地快照', err);
+                    return snapshotPage(kw, offset, size);
+                });
+            }
+            return snapshotPage(kw, offset, size);
+        });
     },
     lines: function (school) {
         if (MODE === 'cloud') {
@@ -341,7 +396,13 @@ function groupRows(rows) {
         if (!groups[k]) { groups[k] = []; order.push(k); }
         groups[k].push(r);
     });
-    return order.map(function (k) { return summarize(groups[k]); });
+    var out = order.map(function (k) { return summarize(groups[k]); });
+    // 已收录校线的排前面，让有分数的先被看到
+    out.sort(function (a, b) {
+        var sa = a.schoolLine ? 1 : 0, sb = b.schoolLine ? 1 : 0;
+        return sb - sa;
+    });
+    return out;
 }
 function wrapDetail(key, rows) {
     if (!rows.length) return null;
@@ -444,7 +505,7 @@ function renderIndex() {
         '<div class="entry-row">' +
         '<div class="entry" id="go-cmp"><span>对比清单</span><span class="arrow">›</span></div>' +
         '<div class="entry blue" id="go-fb"><span>数据反馈</span><span class="arrow">›</span></div></div>' +
-        '<div class="data-hint">研招网只公开<b>招生计划</b>与<b>考试科目</b>；<b>分数线</b>显示为教育部 2026 年国家线（2027 年线 2027 年 3 月才发布），校线/报录比/录取分需院校公示，已收录部分院校。</div>' +
+        '<div class="data-hint">研招网只公开<b>招生计划</b>与<b>考试科目</b>。分数线优先显示<b>院校自划线</b>（已收录 34 所自划线院校中的 33 所，2026 年），未收录的显示教育部 <b>' + NL_YEAR + ' 年国家线</b>（2027 年线 2027 年 3 月才发布）。报录比仅院校自愿公布，多数为「—」。</div>' +
         '<div id="results"><div class="state-card"><div class="spinner"></div><span class="big">正在查询…</span></div></div>' +
         '<div class="src-foot">' + (MODE === 'cloud'
             ? '数据来源：研招网硕士专业目录 · 实时云数据库<br>查不到的数据欢迎通过「数据反馈」提交'
@@ -472,17 +533,29 @@ function renderIndex() {
 
 // ---------- 结果分页加载 ----------
 function resultCardHtml(g) {
+    var sl = g.schoolLine;
     var hasSchoolLine = g.latestReTestLine !== null;
-    var lineVal = hasSchoolLine ? g.latestReTestLine : g.natlTotal;
-    var lineLabel = hasSchoolLine ? (g.latestYear + ' 校线') : (NL_YEAR + ' 国家线(A)');
+    var lineVal, lineLabel, isNatl = false;
+    if (sl && sl.total) {
+        lineVal = Number(sl.total);
+        lineLabel = NL_YEAR + ' 校线';
+    } else if (hasSchoolLine) {
+        lineVal = g.latestReTestLine;
+        lineLabel = g.latestYear + ' 校线';
+    } else {
+        lineVal = g.natlTotal;
+        lineLabel = NL_YEAR + ' 国家线(A)';
+        isNatl = true;
+    }
     var natlTxt = g.natl
-        ? (g.natl.category + (g.natl.tag !== '各学科专业' ? '·' + g.natl.tag : '') + ' · 单科 ' + g.natl.A[1] + '/' + g.natl.A[2])
+        ? (g.natl.category + (g.natl.tag !== '各学科专业' ? '·' + g.natl.tag : '') + ' · 国家线 ' + g.natl.totalA + '，单科 ' + g.natl.A[1] + '/' + g.natl.A[2])
         : '';
     return '<div class="result-card" data-key="' + esc(g.key) + '">' +
         '<div class="rc-head"><span class="name">' + esc(g.major_name) + '</span><span class="code">' + esc(g.major_code) + '</span></div>' +
-        '<div class="rc-meta">' + esc(g.school) + ' · ' + esc(g.college) + '<span class="tag">' + esc(g.study_mode) + '/' + esc(g.degree_type) + '</span></div>' +
+        '<div class="rc-meta">' + esc(g.school) + ' · ' + esc(g.college) + '<span class="tag">' + esc(g.study_mode) + '/' + esc(g.degree_type) + '</span>' +
+        (sl ? '<span class="tag line-tag">校线已收录</span>' : '') + '</div>' +
         '<div class="rc-stats">' +
-        '<div class="stat"><span class="v' + (lineVal === null ? '' : (hasSchoolLine ? '' : ' natl')) + '">' + (lineVal === null ? '—' : esc(lineVal)) + '</span><span class="l">' + esc(lineLabel) + '</span></div>' +
+        '<div class="stat"><span class="v' + (lineVal === null ? '' : (isNatl ? ' natl' : ' sch')) + '">' + (lineVal === null ? '—' : esc(lineVal)) + '</span><span class="l">' + esc(lineLabel) + '</span></div>' +
         '<div class="stat"><span class="v">' + (g.latestUnifiedQuota === null ? '—' : esc(g.latestUnifiedQuota)) + '</span><span class="l">' + esc(g.latestYear + ' 统考名额') + '</span></div>' +
         '<div class="stat"><span class="v">' + (g.latestRatio === null ? '—' : esc(g.latestRatio)) + '</span><span class="l">报录比</span></div>' +
         '</div>' +
@@ -526,8 +599,12 @@ function loadMore() {
         }
         if (!SEARCH.groups.length) {
             if (more) more.innerHTML = '';
+            var catHit = matchCategory(SEARCH.kw);
+            var emptyDesc = catHit
+                ? '「' + esc(catHit) + '」门类的数据还在采集中，目前已完成：工学、法学、经济学、哲学。'
+                : '试试更短的关键词，例如「计算机」或「085404」。';
             list.innerHTML = '<div class="state-card"><span class="big">没有找到匹配的专业</span>' +
-                '<span class="desc">试试更短的关键词，例如「计算机」或「085404」。</span>' +
+                '<span class="desc">' + emptyDesc + '</span>' +
                 (MODE === 'cloud' ? '<button class="primary-btn" onclick="location.hash=\'/feedback?school=' + encodeURIComponent(SEARCH.kw) + '\'">反馈补充「' + esc(SEARCH.kw) + '」</button>' : '') +
                 '</div>';
             return;
