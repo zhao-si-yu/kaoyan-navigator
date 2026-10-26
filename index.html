@@ -43,6 +43,11 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .primary-btn { display: inline-block; margin-top: 14px; padding: 10px 22px; border: none; border-radius: 10px; background: #2f6fed; color: #fff; font-size: 14px; cursor: pointer; }
 .ghost-btn { display: inline-block; margin-top: 14px; padding: 9px 20px; border: 1.5px solid #d1d5db; border-radius: 10px; background: #fff; color: #374151; font-size: 14px; cursor: pointer; }
 /* 详情 */
+.official-box { background: #fff; border: 1.5px solid #d6e2ff; border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+.ob-title { font-size: 12.5px; color: #3a5fcc; line-height: 1.6; margin-bottom: 9px; }
+.ob-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.ob-link { flex: 1 1 30%; text-align: center; padding: 9px 6px; background: #f0f5ff; color: #3a5fcc; border-radius: 8px; font-size: 12.5px; text-decoration: none; }
+.ob-link:active { background: #e0ebff; }
 .d-head { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
 .d-head .name { font-size: 20px; font-weight: 700; }
 .d-head .code { font-size: 13px; color: #9ca3af; margin-left: 8px; }
@@ -437,6 +442,15 @@ function renderDetail(key) {
         var html = '<div class="d-head"><span class="name">' + esc(d.major_name) + '</span><span class="code">' + esc(d.major_code) + '</span>' +
             '<div class="meta">' + esc(d.school) + ' · ' + esc(d.college) + ' · ' + esc(d.study_mode) + '/' + esc(d.degree_type) + '</div>' +
             '<div class="d-actions"><button id="cmp-btn" class="' + (inCmp ? 'in' : '') + '">' + (inCmp ? '✓ 已加入对比' : '+ 加入对比') + '</button></div></div>';
+        var q1 = encodeURIComponent(d.school + ' ' + d.major_name + ' 复试分数线');
+        var q2 = encodeURIComponent(d.school + ' 硕士研究生 拟录取名单 推免');
+        html += '<div class="official-box">' +
+            '<div class="ob-title">复试线 / 报录比 / 推免 / 录取分数：研招网不公开，需查院校官方公示</div>' +
+            '<div class="ob-links">' +
+            '<a class="ob-link" target="_blank" rel="noopener" href="https://www.baidu.com/s?wd=' + q1 + '">查复试分数线</a>' +
+            '<a class="ob-link" target="_blank" rel="noopener" href="https://www.baidu.com/s?wd=' + q2 + '">查拟录取名单 / 推免</a>' +
+            '<a class="ob-link" target="_blank" rel="noopener" href="https://yz.chsi.com.cn/zsgs/">研招信息公开平台</a>' +
+            '</div></div>';
         html += d.years.map(function (y) {
             return '<div class="year-card"><h3>' + esc(y.year) + ' 年' + (y.sourceGrade ? ' <span class="badge">数据来源 ' + esc(y.sourceGrade) + ' 级</span>' : '') + '</h3>' +
                 '<div class="metric-grid">' +
