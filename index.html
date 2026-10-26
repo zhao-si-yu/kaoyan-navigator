@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>考研择校查询</title>
+<meta name="description" content="考研院校专业历年分数线、统考名额、报录比查询">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2937; min-height: 100vh; }
+.page { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+.hero { text-align: center; margin: 12px 0 20px; }
+.hero .title { font-size: 26px; font-weight: 700; }
+.hero .subtitle { display: block; margin-top: 6px; font-size: 13px; color: #6b7280; }
+.search-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+.search-bar input { flex: 1; padding: 11px 14px; border: 1.5px solid #e5e8eb; border-radius: 10px; font-size: 15px; background: #fff; outline: none; }
+.search-bar input:focus { border-color: #2f6fed; }
+.search-bar button { padding: 0 18px; border: none; border-radius: 10px; background: #2f6fed; color: #fff; font-size: 15px; cursor: pointer; }
+.entry-row { display: flex; gap: 8px; margin-bottom: 16px; }
+.entry { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1.5px solid #e5e8eb; border-radius: 10px; background: #fff; font-size: 13.5px; cursor: pointer; color: #374151; }
+.entry.blue { background: #f0f5ff; border-color: #d6e2ff; color: #3a5fcc; }
+.entry .arrow { color: #9ca3af; }
+.state-card { padding: 36px 20px; text-align: center; background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; }
+.state-card .big { font-size: 16px; font-weight: 600; display: block; }
+.state-card .desc { display: block; margin-top: 8px; font-size: 13px; color: #6b7280; line-height: 1.6; }
+.spinner { width: 28px; height: 28px; margin: 0 auto 14px; border: 3px solid #e5e8eb; border-top-color: #2f6fed; border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.result-card { padding: 14px 16px; background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; margin-bottom: 10px; cursor: pointer; }
+.result-card:hover { border-color: #2f6fed; }
+.rc-head { display: flex; justify-content: space-between; align-items: baseline; }
+.rc-head .name { font-size: 16px; font-weight: 600; }
+.rc-head .code { font-size: 12px; color: #9ca3af; }
+.rc-meta { margin-top: 4px; font-size: 12.5px; color: #6b7280; }
+.rc-meta .tag { margin-left: 6px; padding: 1px 6px; background: #f0f5ff; color: #3a5fcc; border-radius: 4px; font-size: 11px; }
+.rc-stats { display: flex; margin-top: 12px; }
+.rc-stats .stat { flex: 1; text-align: center; }
+.rc-stats .stat + .stat { border-left: 1px solid #f0f0f2; }
+.rc-stats .v { font-size: 17px; font-weight: 700; color: #1f2937; display: block; }
+.rc-stats .l { font-size: 11px; color: #9ca3af; display: block; margin-top: 2px; }
+.rc-foot { margin-top: 10px; font-size: 11.5px; color: #9ca3af; text-align: center; }
+.primary-btn { display: inline-block; margin-top: 14px; padding: 10px 22px; border: none; border-radius: 10px; background: #2f6fed; color: #fff; font-size: 14px; cursor: pointer; }
+.ghost-btn { display: inline-block; margin-top: 14px; padding: 9px 20px; border: 1.5px solid #d1d5db; border-radius: 10px; background: #fff; color: #374151; font-size: 14px; cursor: pointer; }
+/* 详情 */
+.d-head { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+.d-head .name { font-size: 20px; font-weight: 700; }
+.d-head .code { font-size: 13px; color: #9ca3af; margin-left: 8px; }
+.d-head .meta { margin-top: 6px; font-size: 13px; color: #6b7280; }
+.d-actions { display: flex; gap: 8px; margin-top: 14px; }
+.d-actions button { flex: 1; padding: 10px 0; border-radius: 10px; font-size: 14px; cursor: pointer; border: 1.5px solid #d6e2ff; background: #f0f5ff; color: #3a5fcc; }
+.d-actions button.in { background: #2f6fed; color: #fff; border-color: #2f6fed; }
+.year-card { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 14px 16px; margin-bottom: 10px; }
+.year-card h3 { font-size: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+.badge { font-size: 11px; padding: 1px 7px; border-radius: 4px; background: #fff4e5; color: #b45309; }
+.metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.metric { padding: 8px 4px; background: #f8fafc; border-radius: 8px; text-align: center; }
+.metric .v { font-size: 15px; font-weight: 700; display: block; }
+.metric .l { font-size: 10.5px; color: #9ca3af; display: block; margin-top: 2px; }
+.note-line { margin-top: 10px; font-size: 12px; color: #6b7280; line-height: 1.6; }
+.note-line b { color: #374151; }
+.subject-change { margin-top: 8px; padding: 7px 10px; background: #fef2f2; color: #b91c1c; border-radius: 8px; font-size: 12.5px; }
+/* 对比 */
+.cmp-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; font-size: 13px; }
+.cmp-table th, .cmp-table td { border: 1px solid #eef0f3; padding: 9px 8px; text-align: center; }
+.cmp-table th { background: #f8fafc; font-weight: 600; color: #374151; }
+.cmp-table .row-label { text-align: left; white-space: nowrap; color: #6b7280; font-size: 12px; }
+.cmp-name { text-align: center; }
+.cmp-name .n { display: block; font-weight: 600; }
+.cmp-name .s { display: block; font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.cmp-remove { color: #b91c1c; cursor: pointer; font-size: 11.5px; }
+/* 反馈表单 */
+.form-card { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 18px; }
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 13px; color: #374151; margin-bottom: 6px; }
+.field label .hint { color: #9ca3af; font-size: 12px; }
+.field input, .field select, .field textarea { width: 100%; padding: 10px 12px; border: 1.5px solid #e5e8eb; border-radius: 9px; font-size: 14px; font-family: inherit; outline: none; background: #fff; }
+.field input:focus, .field textarea:focus, .field select:focus { border-color: #2f6fed; }
+.field textarea { height: 110px; resize: vertical; }
+.back-link { display: inline-block; margin-bottom: 12px; font-size: 13.5px; color: #3a5fcc; cursor: pointer; }
+.src-foot { margin-top: 24px; text-align: center; font-size: 11.5px; color: #9ca3af; line-height: 1.7; }
+</style>
+</head>
+<body>
+<div class="page" id="app"></div>
+
+<script src="config.js"></script>
+<script src="vendor/workbuddy-cloud-sdk.js"></script>
+<script>
+(function () {
+'use strict';
+
+var CFG = window.KAOYAN_CONFIG || {};
+var MODE = CFG.mode === 'snapshot' ? 'snapshot' : 'cloud';
+var app = document.getElementById('app');
+
+// ---------- 数据层 ----------
+var cloud = null;
+if (MODE === 'cloud') {
+    cloud = WorkBuddyCloud.createWorkBuddyCloud({
+        endpoint: CFG.endpoint,
+        oauthRelayBaseUrl: CFG.oauthRelayBaseUrl,
+        publishableKey: CFG.publishableKey,
+    });
+}
+
+var snapshot = null; // 快照数据懒加载缓存
+
+function toNumber(v) {
+    if (v === null || v === undefined || v === '') return null;
+    var n = Number(v);
+    return isNaN(n) ? null : n;
+}
+function ratio(row) {
+    var a = toNumber(row.applicants), d = toNumber(row.admitted_count);
+    if (a === null || d === null || d === 0) return null;
+    return Math.round((a / d) * 10) / 10;
+}
+function groupKey(r) {
+    return [r.school, r.college, r.major_code, r.major_name, r.study_mode].join('|');
+}
+function summarize(rows) {
+    var sorted = rows.slice().sort(function (a, b) { return Number(b.year) - Number(a.year); });
+    var latest = sorted[0];
+    return {
+        key: groupKey(latest),
+        school: latest.school, college: latest.college,
+        major_code: latest.major_code, major_name: latest.major_name,
+        study_mode: latest.study_mode, degree_type: latest.degree_type,
+        yearCount: sorted.length,
+        yearRange: sorted[sorted.length - 1].year + '-' + latest.year,
+        latestYear: latest.year,
+        latestReTestLine: toNumber(latest.retest_line),
+        latestUnifiedQuota: toNumber(latest.unified_quota),
+        latestRatio: ratio(latest),
+    };
+}
+function mapYearRow(row) {
+    return {
+        year: row.year,
+        nationalLine: toNumber(row.national_line), retestLine: toNumber(row.retest_line),
+        plannedTotal: toNumber(row.planned_total), recommendedExempt: toNumber(row.recommended_exempt),
+        unifiedQuota: toNumber(row.unified_quota), applicants: toNumber(row.applicants),
+        retestCount: toNumber(row.retest_count), admittedCount: toNumber(row.admitted_count),
+        admittedMin: toNumber(row.admitted_min), admittedMedian: toNumber(row.admitted_median),
+        admittedMean: toNumber(row.admitted_mean), ratio: ratio(row),
+        subjectChange: row.subject_change || '', notes: row.notes || '',
+        sourceUrl: row.source_url || '', sourceGrade: row.source_grade || '',
+    };
+}
+
+var DS = {
+    search: function (keyword) {
+        var kw = String(keyword || '').trim();
+        if (MODE === 'cloud') {
+            return cloudSearch(kw).catch(function (err) {
+                console.warn('云查询失败，降级到本地快照', err);
+                return snapshotSearch(kw);
+            });
+        }
+        return snapshotSearch(kw);
+    },
+    detail: function (key) {
+        var parts = String(key).split('|');
+        if (parts.length !== 5) return Promise.resolve(null);
+        if (MODE === 'cloud') {
+            return cloudDetail(parts).catch(function (err) {
+                console.warn('云详情失败，降级到本地快照', err);
+                return snapshotDetail(parts);
+            });
+        }
+        return snapshotDetail(parts);
+    },
+    submitFeedback: function (entry) {
+        if (MODE !== 'cloud') return Promise.reject(new Error('snapshot'));
+        return cloud.database.from('kaoyan_feedback').insert(entry).then(function (res) {
+            if (res.error) throw res.error;
+            return true;
+        });
+    },
+};
+
+function cloudSearch(kw) {
+    var q = cloud.database.from('kaoyan_records').select('*');
+    if (kw) {
+        q = q.or('school.ilike.%' + kw + '%,college.ilike.%' + kw + '%,major_name.ilike.%' + kw + '%,major_code.ilike.%' + kw + '%');
+    }
+    return q.order('school').order('year', { ascending: false }).limit(500).then(function (res) {
+        if (res.error) throw res.error;
+        return groupRows(res.data || []);
+    });
+}
+function cloudDetail(parts) {
+    var match = { school: parts[0], college: parts[1], major_code: parts[2], major_name: parts[3], study_mode: parts[4] };
+    return cloud.database.from('kaoyan_records').select('*').match(match)
+        .order('year', { ascending: false }).then(function (res) {
+            if (res.error) throw res.error;
+            return wrapDetail(parts.join('|'), res.data || []);
+        });
+}
+function snapshotSearch(kw) {
+    return loadSnapshot().then(function (rows) {
+        var hit = rows.filter(function (r) {
+            if (!kw) return true;
+            return (r.school || '').indexOf(kw) !== -1 || (r.college || '').indexOf(kw) !== -1
+                || (r.major_name || '').indexOf(kw) !== -1 || (r.major_code || '').indexOf(kw) !== -1;
+        });
+        return groupRows(hit);
+    });
+}
+function snapshotDetail(parts) {
+    return loadSnapshot().then(function (rows) {
+        var hit = rows.filter(function (r) {
+            return parts[0] === r.school && parts[1] === r.college
+                && parts[2] === r.major_code && parts[3] === r.major_name
+                && parts[4] === r.study_mode;
+        }).sort(function (a, b) { return Number(b.year) - Number(a.year); });
+        return wrapDetail(parts.join('|'), hit);
+    });
+}
+
+function groupRows(rows) {
+    var groups = {}, order = [];
+    rows.forEach(function (r) {
+        var k = groupKey(r);
+        if (!groups[k]) { groups[k] = []; order.push(k); }
+        groups[k].push(r);
+    });
+    return order.map(function (k) { return summarize(groups[k]); });
+}
+function wrapDetail(key, rows) {
+    if (!rows.length) return null;
+    var head = rows[0];
+    return {
+        key: key, school: head.school, college: head.college,
+        major_code: head.major_code, major_name: head.major_name,
+        study_mode: head.study_mode, degree_type: head.degree_type,
+        years: rows.map(mapYearRow),
+    };
+}
+function loadSnapshot() {
+    if (snapshot) return Promise.resolve(snapshot);
+    return fetch('data/snapshot.json').then(function (res) { return res.json(); }).then(function (data) {
+        snapshot = data;
+        return snapshot;
+    });
+}
+
+// ---------- 对比清单（localStorage，最多 4 个） ----------
+var COMPARE_LIMIT = 4;
+function loadCompare() {
+    try {
+        var raw = JSON.parse(localStorage.getItem('kaoyan_compare') || '[]');
+        return Array.isArray(raw) ? raw : [];
+    } catch (e) { return []; }
+}
+function toggleCompare(key) {
+    var list = loadCompare();
+    var i = list.indexOf(key);
+    if (i !== -1) { list.splice(i, 1); save(list); return { inList: false, full: false }; }
+    if (list.length >= COMPARE_LIMIT) return { inList: false, full: true };
+    list.push(key); save(list); return { inList: true, full: false };
+}
+function save(list) { localStorage.setItem('kaoyan_compare', JSON.stringify(list.slice(0, COMPARE_LIMIT))); }
+
+// ---------- 路由 ----------
+function nav(hash) { location.hash = hash; }
+window.addEventListener('hashchange', render);
+
+function esc(s) {
+    return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function dash(v) { return (v === null || v === undefined) ? '—' : esc(v); }
+
+function parseHash() {
+    var h = location.hash.replace(/^#\/?/, '');
+    var qi = h.indexOf('?');
+    var path = qi === -1 ? h : h.slice(0, qi);
+    var query = {};
+    if (qi !== -1) {
+        h.slice(qi + 1).split('&').forEach(function (kv) {
+            var p = kv.split('=');
+            query[decodeURIComponent(p[0])] = decodeURIComponent(p[1] || '');
+        });
+    }
+    return { path: path, query: query };
+}
+
+var FEEDBACK_TYPES = [
+    { key: 'missing', label: '查不到院校/专业' },
+    { key: 'wrong', label: '数据有误' },
+    { key: 'suggestion', label: '其他建议' },
+];
+
+function render() {
+    var r = parseHash();
+    if (r.path === 'detail') return renderDetail(r.query.key);
+    if (r.path === 'compare') return renderCompare();
+    if (r.path === 'feedback') return renderFeedback(r.query.school || '');
+    renderIndex();
+}
+
+// ---------- 首页 ----------
+var lastKeyword = '';
+
+function renderIndex() {
+    app.innerHTML =
+        '<div class="hero"><span class="title">考研择校查询</span>' +
+        '<span class="subtitle">院校 / 专业 / 分数线 / 名额 / 报录比</span></div>' +
+        '<div class="search-bar"><input id="kw" placeholder="搜索学校、学院、专业名称或代码" value="' + esc(lastKeyword) + '">' +
+        '<button id="go">搜索</button></div>' +
+        '<div class="entry-row">' +
+        '<div class="entry" id="go-cmp"><span>对比清单</span><span class="arrow">›</span></div>' +
+        '<div class="entry blue" id="go-fb"><span>数据反馈</span><span class="arrow">›</span></div></div>' +
+        '<div id="results"><div class="state-card"><div class="spinner"></div><span class="big">正在查询…</span></div></div>' +
+        '<div class="src-foot">' + (MODE === 'cloud'
+            ? '数据来源：研招网硕士专业目录 · 实时云数据库<br>查不到的数据欢迎通过「数据反馈」提交'
+            : '数据来源：研招网硕士专业目录 · 静态快照（定期更新）') + '</div>';
+
+    var input = document.getElementById('kw');
+    document.getElementById('go').onclick = function () { lastKeyword = input.value; doSearch(); };
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { lastKeyword = input.value; doSearch(); } });
+    document.getElementById('go-cmp').onclick = function () { nav('/compare'); };
+    document.getElementById('go-fb').onclick = function () { nav('/feedback'); };
+
+    var box = document.getElementById('results');
+    DS.search(lastKeyword).then(function (groups) {
+        if (!groups.length) {
+            box.innerHTML = '<div class="state-card"><span class="big">没有找到匹配的专业</span>' +
+                '<span class="desc">试试更短的关键词，例如「计算机」或「085404」。</span>' +
+                (MODE === 'cloud' ? '<button class="primary-btn" onclick="location.hash=\'/feedback?school=' + encodeURIComponent(lastKeyword) + '\'">反馈补充「' + esc(lastKeyword) + '」</button>' : '') +
+                '</div>';
+            return;
+        }
+        box.innerHTML = groups.map(function (g) {
+            return '<div class="result-card" data-key="' + esc(g.key) + '">' +
+                '<div class="rc-head"><span class="name">' + esc(g.major_name) + '</span><span class="code">' + esc(g.major_code) + '</span></div>' +
+                '<div class="rc-meta">' + esc(g.school) + ' · ' + esc(g.college) + '<span class="tag">' + esc(g.study_mode) + '/' + esc(g.degree_type) + '</span></div>' +
+                '<div class="rc-stats">' +
+                stat(g.latestReTestLine, g.latestYear + '复试线') +
+                stat(g.latestUnifiedQuota, g.latestYear + '统考名额') +
+                stat(g.latestRatio, '报录比') + '</div>' +
+                '<div class="rc-foot">' + esc(g.yearRange) + ' 共 ' + g.yearCount + ' 年数据 · 点击查看详情</div></div>';
+        }).join('');
+        Array.prototype.forEach.call(box.querySelectorAll('.result-card'), function (el) {
+            el.onclick = function () { nav('/detail?key=' + encodeURIComponent(el.getAttribute('data-key'))); };
+        });
+    }).catch(function (err) {
+        console.error(err);
+        box.innerHTML = '<div class="state-card"><span class="big">查询失败</span>' +
+            '<span class="desc">网络异常或服务暂不可用，请稍后重试。</span>' +
+            '<button class="primary-btn" onclick="location.reload()">重新加载</button></div>';
+    });
+
+    function stat(v, label) {
+        return '<div class="stat"><span class="v">' + (v === null ? '—' : esc(v)) + '</span><span class="l">' + esc(label) + '</span></div>';
+    }
+}
+
+function doSearch() {
+    renderIndex(); // renderIndex 会按 lastKeyword 重新查询并渲染
+}
+
+// ---------- 详情 ----------
+function renderDetail(key) {
+    app.innerHTML = '<span class="back-link" onclick="location.hash=\'/\'">‹ 返回搜索</span>' +
+        '<div id="detail-body"><div class="state-card"><div class="spinner"></div><span class="big">加载中…</span></div></div>';
+    DS.detail(key).then(function (d) {
+        var body = document.getElementById('detail-body');
+        if (!d) { body.innerHTML = '<div class="state-card"><span class="big">未找到该专业数据</span></div>'; return; }
+        var inCmp = loadCompare().indexOf(key) !== -1;
+        var html = '<div class="d-head"><span class="name">' + esc(d.major_name) + '</span><span class="code">' + esc(d.major_code) + '</span>' +
+            '<div class="meta">' + esc(d.school) + ' · ' + esc(d.college) + ' · ' + esc(d.study_mode) + '/' + esc(d.degree_type) + '</div>' +
+            '<div class="d-actions"><button id="cmp-btn" class="' + (inCmp ? 'in' : '') + '">' + (inCmp ? '✓ 已加入对比' : '+ 加入对比') + '</button></div></div>';
+        html += d.years.map(function (y) {
+            return '<div class="year-card"><h3>' + esc(y.year) + ' 年' + (y.sourceGrade ? ' <span class="badge">数据来源 ' + esc(y.sourceGrade) + ' 级</span>' : '') + '</h3>' +
+                '<div class="metric-grid">' +
+                metric(y.nationalLine, '国家线') + metric(y.retestLine, '复试线') +
+                metric(y.plannedTotal, '拟招生') + metric(y.recommendedExempt, '推免') +
+                metric(y.unifiedQuota, '统考名额') + metric(y.applicants, '报名人数') +
+                metric(y.retestCount, '进复试') + metric(y.admittedCount, '录取人数') +
+                metric(y.ratio, '报录比') + metric(y.admittedMin, '录取最低分') +
+                metric(y.admittedMedian, '录取中位分') + metric(y.admittedMean, '录取平均分') +
+                '</div>' +
+                (y.subjectChange ? '<div class="subject-change">⚠ 科目变化：' + esc(y.subjectChange) + '</div>' : '') +
+                (y.notes ? '<div class="note-line"><b>备注：</b>' + esc(y.notes) + '</div>' : '') +
+                (y.sourceUrl ? '<div class="note-line"><b>来源：</b><a href="' + esc(y.sourceUrl) + '" target="_blank" rel="noopener">' + esc(y.sourceUrl) + '</a></div>' : '') +
+                '</div>';
+        }).join('');
+        html += '<div class="src-foot">「—」表示该年份暂无此数据（区别于 0）</div>';
+        body.innerHTML = html;
+        document.getElementById('cmp-btn').onclick = function () {
+            var res = toggleCompare(key);
+            if (res.full) { alert('对比清单已满（最多 ' + COMPARE_LIMIT + ' 个），请先移除再添加'); return; }
+            renderDetail(key);
+        };
+    }).catch(function (err) {
+        console.error(err);
+        document.getElementById('detail-body').innerHTML =
+            '<div class="state-card"><span class="big">加载失败</span><button class="primary-btn" onclick="location.reload()">重试</button></div>';
+    });
+    function metric(v, label) {
+        return '<div class="metric"><span class="v">' + (v === null ? '—' : esc(v)) + '</span><span class="l">' + esc(label) + '</span></div>';
+    }
+}
+
+// ---------- 对比 ----------
+var CMP_METRICS = [
+    ['retestLine', '复试线'], ['unifiedQuota', '统考名额'], ['plannedTotal', '拟招生'],
+    ['applicants', '报名人数'], ['admittedCount', '录取人数'], ['ratio', '报录比'],
+    ['admittedMin', '录取最低'], ['admittedMedian', '中位分'], ['admittedMean', '平均分'],
+];
+
+function renderCompare() {
+    app.innerHTML = '<span class="back-link" onclick="location.hash=\'/\'">‹ 返回搜索</span><div id="cmp-body"></div>';
+    var keys = loadCompare();
+    var body = document.getElementById('cmp-body');
+    if (!keys.length) {
+        body.innerHTML = '<div class="state-card"><span class="big">对比清单是空的</span>' +
+            '<span class="desc">在专业详情页点击「加入对比」，最多可同时对比 ' + COMPARE_LIMIT + ' 个专业。</span></div>';
+        return;
+    }
+    body.innerHTML = '<div class="state-card"><div class="spinner"></div><span class="big">加载对比数据…</span></div>';
+    Promise.all(keys.map(function (k) { return DS.detail(k).catch(function () { return null; }); }))
+        .then(function (items) {
+            items = items.filter(Boolean);
+            if (!items.length) {
+                body.innerHTML = '<div class="state-card"><span class="big">对比的专业数据加载失败</span></div>';
+                return;
+            }
+            var head = '<tr><th class="row-label">指标</th>' + items.map(function (it) {
+                var latest = it.years[0];
+                return '<th class="cmp-name"><span class="n">' + esc(it.major_name) + '</span>' +
+                    '<span class="s">' + esc(it.school) + ' · ' + latest.year + '年</span>' +
+                    '<span class="cmp-remove" data-key="' + esc(it.key) + '">移除</span></th>';
+            }).join('') + '</tr>';
+            var rows = CMP_METRICS.map(function (m) {
+                return '<tr><td class="row-label">' + esc(m[1]) + '</td>' + items.map(function (it) {
+                    var v = it.years[0][m[0]];
+                    return '<td>' + (v === null || v === undefined ? '—' : esc(v)) + '</td>';
+                }).join('') + '</tr>';
+            }).join('');
+            body.innerHTML = '<table class="cmp-table">' + head + rows + '</table>' +
+                '<div class="src-foot">对比取各专业最新年份数据</div>';
+            Array.prototype.forEach.call(body.querySelectorAll('.cmp-remove'), function (el) {
+                el.onclick = function () { toggleCompare(el.getAttribute('data-key')); renderCompare(); };
+            });
+        });
+}
+
+// ---------- 反馈 ----------
+function renderFeedback(presetSchool) {
+    if (MODE !== 'cloud') {
+        app.innerHTML = '<span class="back-link" onclick="location.hash=\'/\'">‹ 返回搜索</span>' +
+            '<div class="state-card"><span class="big">静态版暂不支持反馈提交</span>' +
+            '<span class="desc">请使用正式版提交反馈。</span></div>';
+        return;
+    }
+    var options = FEEDBACK_TYPES.map(function (t, i) {
+        return '<option value="' + t.key + '"' + (i === 0 ? ' selected' : '') + '>' + esc(t.label) + '</option>';
+    }).join('');
+    app.innerHTML = '<span class="back-link" onclick="location.hash=\'/\'">‹ 返回搜索</span>' +
+        '<div class="hero" style="text-align:left"><span class="title" style="font-size:20px">数据反馈</span>' +
+        '<span class="subtitle">查不到的院校专业、有误的数据，提交后我们会补充修正</span></div>' +
+        '<div class="form-card" id="fb-form">' +
+        '<div class="field"><label>反馈类型</label><select id="fb-type">' + options + '</select></div>' +
+        '<div class="field"><label>学校 <span class="hint">（学校或专业至少填一项）</span></label>' +
+        '<input id="fb-school" placeholder="例：山西农业大学" value="' + esc(presetSchool) + '"></div>' +
+        '<div class="field"><label>学院</label><input id="fb-college" placeholder="选填"></div>' +
+        '<div class="field"><label>专业</label><input id="fb-major" placeholder="选填，例：计算机技术 / 085404"></div>' +
+        '<div class="field"><label>年份</label><input id="fb-year" type="number" placeholder="选填，例：2026"></div>' +
+        '<div class="field"><label>具体说明</label><textarea id="fb-detail" maxlength="500" placeholder="描述具体问题，至少 5 个字"></textarea></div>' +
+        '<div class="field"><label>联系方式 <span class="hint">（选填）</span></label><input id="fb-contact" placeholder="微信号 / 邮箱 / QQ"></div>' +
+        '<button class="primary-btn" id="fb-submit" style="width:100%">提交反馈</button></div>';
+
+    document.getElementById('fb-submit').onclick = function () {
+        var school = document.getElementById('fb-school').value.trim();
+        var major = document.getElementById('fb-major').value.trim();
+        var detail = document.getElementById('fb-detail').value.trim();
+        if (!school && !major) { alert('请至少填写学校或专业'); return; }
+        if (detail.length < 5) { alert('请描述具体一些（至少 5 个字）'); return; }
+        var btn = document.getElementById('fb-submit');
+        btn.disabled = true; btn.textContent = '提交中…';
+        DS.submitFeedback({
+            feedback_type: document.getElementById('fb-type').value,
+            school: school || null, college: document.getElementById('fb-college').value.trim() || null,
+            major: major || null, year: document.getElementById('fb-year').value.trim() || null,
+            detail: detail, contact: document.getElementById('fb-contact').value.trim() || null,
+        }).then(function () {
+            document.getElementById('fb-form').innerHTML =
+                '<div style="text-align:center;padding:30px 0">' +
+                '<div style="width:56px;height:56px;margin:0 auto 16px;border-radius:50%;background:#e8f5e9;color:#2e9e5b;font-size:30px;line-height:56px">✓</div>' +
+                '<div style="font-size:17px;font-weight:600">反馈已提交</div>' +
+                '<div style="margin-top:8px;font-size:13px;color:#6b7280">感谢！我们会尽快核实并补充数据。</div>' +
+                '<button class="primary-btn" onclick="location.hash=\'/\'">返回</button></div>';
+        }).catch(function (err) {
+            console.error(err);
+            alert('提交失败，请稍后重试');
+            btn.disabled = false; btn.textContent = '提交反馈';
+        });
+    };
+}
+
+render();
+})();
+</script>
+</body>
+</html>
