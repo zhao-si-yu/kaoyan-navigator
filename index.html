@@ -59,6 +59,17 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .year-card h3 { font-size: 15px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
 .badge { font-size: 11px; padding: 1px 7px; border-radius: 4px; background: #fff4e5; color: #b45309; }
 .metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.lines-box { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.lb-head { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.lb-tip { font-size: 12.5px; color: #b45309; background: #fff4e5; border-radius: 8px; padding: 7px 10px; margin-bottom: 8px; line-height: 1.6; }
+.lb-scroll { overflow-x: auto; }
+.line-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
+.line-table th, .line-table td { border: 1px solid #eef0f3; padding: 6px 8px; text-align: center; }
+.line-table th { background: #f8fafc; font-weight: 600; }
+.line-table td:nth-child(2) { text-align: left; }
+.line-table tr.hl td { background: #f0f5ff; font-weight: 600; color: #3a5fcc; }
+.lb-foot { font-size: 11.5px; color: #9ca3af; margin-top: 8px; line-height: 1.6; }
+.lb-empty { font-size: 12.5px; color: #9ca3af; line-height: 1.6; }
 .metric { padding: 8px 4px; background: #f8fafc; border-radius: 8px; text-align: center; }
 .metric .v { font-size: 15px; font-weight: 700; display: block; }
 .metric .l { font-size: 10.5px; color: #9ca3af; display: block; margin-top: 2px; }
@@ -168,6 +179,21 @@ var DS = {
         }
         return snapshotPage(kw, offset, size);
     },
+    lines: function (school) {
+        if (MODE === 'cloud') {
+            return cloud.database.from('kaoyan_school_lines').select('*')
+                .match({ school: school }).order('year', { ascending: false })
+                .then(function (res) {
+                    if (res.error) throw res.error;
+                    return res.data || [];
+                })
+                .catch(function (err) { console.warn('校线查询失败', err); return []; });
+        }
+        return loadLines().then(function (rows) {
+            return rows.filter(function (r) { return r.school === school; })
+                .sort(function (a, b) { return Number(b.year) - Number(a.year); });
+        }).catch(function () { return []; });
+    },
     detail: function (key) {
         var parts = String(key).split('|');
         if (parts.length !== 5) return Promise.resolve(null);
@@ -251,8 +277,15 @@ function wrapDetail(key, rows) {
         years: rows.map(mapYearRow),
     };
 }
-function loadSnapshot() {
-    if (snapshot) return Promise.resolve(snapshot);
+var linesCache = null;
+function loadLines() {
+    if (linesCache) return Promise.resolve(linesCache);
+    return fetch('data/lines.json').then(function (res) { return res.json(); }).then(function (data) {
+        linesCache = data || [];
+        return linesCache;
+    });
+}
+function loadSnapshot() {    if (snapshot) return Promise.resolve(snapshot);
     return fetch('data/snapshot.json').then(function (res) { return res.json(); }).then(function (data) {
         snapshot = data;
         return snapshot;
@@ -467,7 +500,12 @@ function renderDetail(key) {
                 '</div>';
         }).join('');
         html += '<div class="src-foot">「—」表示该年份暂无此数据（区别于 0）</div>';
+        html += '<div id="school-lines"></div>';
         body.innerHTML = html;
+        DS.lines(d.school).then(function (lines) {
+            var el = document.getElementById('school-lines');
+            if (el) el.innerHTML = linesHtml(lines, d.major_code, d.school);
+        });
         document.getElementById('cmp-btn').onclick = function () {
             var res = toggleCompare(key);
             if (res.full) { alert('对比清单已满（最多 ' + COMPARE_LIMIT + ' 个），请先移除再添加'); return; }
@@ -481,6 +519,51 @@ function renderDetail(key) {
     function metric(v, label) {
         return '<div class="metric"><span class="v">' + (v === null ? '—' : esc(v)) + '</span><span class="l">' + esc(label) + '</span></div>';
     }
+}
+
+// ---------- 院校复试基本分数线 ----------
+var CAT_NAME = {
+    '01': '哲学', '02': '经济学', '03': '法学', '04': '教育学', '05': '文学',
+    '06': '历史学', '07': '理学', '08': '工学', '09': '农学', '10': '医学',
+    '11': '军事学', '12': '管理学', '13': '艺术学', '14': '交叉学科'
+};
+
+function linesHtml(rows, majorCode, school) {
+    if (!rows || !rows.length) {
+        return '<div class="lines-box"><div class="lb-head">' + esc(school) + ' 复试基本分数线</div>' +
+            '<div class="lb-empty">暂未收录该校分数线。可点上方「查复试分数线」查看院校官方原文。</div></div>';
+    }
+    var years = [];
+    rows.forEach(function (r) { if (years.indexOf(r.year) === -1) years.push(r.year); });
+    var y = years[0];
+    var cur = rows.filter(function (r) { return r.year === y; });
+    var myCat = CAT_NAME[String(majorCode || '').slice(0, 2)] || '';
+
+    function hit(r) {
+        if (!myCat) return false;
+        return r.category === myCat || r.category === myCat + '各学科专业'
+            || (r.degree_type === '专业学位' && String(r.category).indexOf(myCat) === 0);
+    }
+
+    var body = cur.map(function (r) {
+        return '<tr' + (hit(r) ? ' class="hl"' : '') + '><td>' + esc(r.degree_type || '') + '</td>' +
+            '<td>' + esc(r.category) + (r.major_code ? ' [' + esc(r.major_code) + ']' : '') + '</td>' +
+            '<td>' + esc(r.total || '—') + '</td><td>' + esc(r.politics || '—') + '</td>' +
+            '<td>' + esc(r.foreign_lang || '—') + '</td><td>' + esc(r.subject1 || '—') + '</td>' +
+            '<td>' + esc(r.subject2 || '—') + '</td></tr>';
+    }).join('');
+
+    var mine = cur.filter(hit);
+    var tip = mine.length
+        ? '<div class="lb-tip">你查的专业属「' + esc(myCat) + '」，该校 ' + esc(y) + ' 年校线：总分 ' +
+          esc(mine[0].total || '—') + ' 分' + (mine[0].note ? '（' + esc(mine[0].note) + '）' : '') + '</div>'
+        : '';
+
+    return '<div class="lines-box"><div class="lb-head">' + esc(school) + ' ' + esc(y) + ' 年复试基本分数线</div>' + tip +
+        '<div class="lb-scroll"><table class="line-table"><thead><tr>' +
+        '<th>类型</th><th>门类 / 类别</th><th>总分</th><th>政治</th><th>外语</th><th>业务1</th><th>业务2</th>' +
+        '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+        '<div class="lb-foot">数据来自院校研究生院官方公告 · 这是学校最低线，学院可在此基础上另划专业线</div></div>';
 }
 
 // ---------- 对比 ----------
