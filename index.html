@@ -17,6 +17,14 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .search-bar input:focus { border-color: #2f6fed; }
 .search-bar button { padding: 0 18px; border: none; border-radius: 10px; background: #2f6fed; color: #fff; font-size: 15px; cursor: pointer; }
 .entry-row { display: flex; gap: 8px; margin-bottom: 16px; }
+.cat-row { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 12px; }
+.cat-chip { padding: 5px 11px; border: 1px solid #e5e8eb; border-radius: 999px; background: #fff; color: #4b5563; font-size: 12.5px; cursor: pointer; line-height: 1.4; }
+.cat-chip:hover { border-color: #c7d2fe; color: #2f6fed; }
+.cat-chip.on { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+.data-hint { font-size: 12px; line-height: 1.7; color: #6b7280; background: #f8fafc; border: 1px solid #eef2f7; border-radius: 10px; padding: 9px 12px; margin-bottom: 14px; }
+.data-hint b { color: #374151; font-weight: 600; }
+.rc-stats .v.natl { color: #b45309; }
+.natl-strip { font-size: 12.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; line-height: 1.6; }
 .entry { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1.5px solid #e5e8eb; border-radius: 10px; background: #fff; font-size: 13.5px; cursor: pointer; color: #374151; }
 .entry.blue { background: #f0f5ff; border-color: #d6e2ff; color: #3a5fcc; }
 .entry .arrow { color: #9ca3af; }
@@ -138,6 +146,9 @@ function groupKey(r) {
 function summarize(rows) {
     var sorted = rows.slice().sort(function (a, b) { return Number(b.year) - Number(a.year); });
     var latest = sorted[0];
+    var natl = nationalLine(latest.major_code);
+    var quota = toNumber(latest.unified_quota);
+    if (quota === null) quota = toNumber(latest.planned_total);
     return {
         key: groupKey(latest),
         school: latest.school, college: latest.college,
@@ -147,13 +158,17 @@ function summarize(rows) {
         yearRange: sorted.length > 1 ? (sorted[sorted.length - 1].year + '-' + latest.year) : (latest.year + ' 年'),
         latestYear: latest.year,
         latestReTestLine: toNumber(latest.retest_line),
-        latestUnifiedQuota: toNumber(latest.unified_quota),
+        latestUnifiedQuota: quota,
         latestRatio: ratio(latest),
+        natl: natl,
+        natlTotal: natl ? natl.totalA : null,
+        natlTag: natl ? natl.tag : '',
     };
 }
 function mapYearRow(row) {
     return {
         year: row.year,
+        natl: nationalLine(row.major_code),
         nationalLine: toNumber(row.national_line), retestLine: toNumber(row.retest_line),
         plannedTotal: toNumber(row.planned_total), recommendedExempt: toNumber(row.recommended_exempt),
         unifiedQuota: toNumber(row.unified_quota), applicants: toNumber(row.applicants),
@@ -163,6 +178,57 @@ function mapYearRow(row) {
         subjectChange: row.subject_change || '', notes: row.notes || '',
         sourceUrl: row.source_url || '', sourceGrade: row.source_grade || '',
     };
+}
+
+// ---------- 国家线（教育部 2026-02-28 公布；2027 年线预计 2027 年 3 月发布）----------
+var NL_YEAR = '2026';
+var NL_BASE = {
+    '哲学': { A: [326, 41, 62], B: [316, 38, 57] },
+    '经济学': { A: [324, 40, 60], B: [314, 37, 56] },
+    '法学': { A: [321, 40, 60], B: [311, 37, 56] },
+    '教育学': { A: [347, 48, 72], B: [337, 45, 68] },
+    '文学': { A: [354, 48, 72], B: [344, 45, 68] },
+    '历史学': { A: [341, 45, 135], B: [331, 42, 126] },
+    '理学': { A: [275, 35, 53], B: [265, 32, 48] },
+    '工学': { A: [264, 35, 53], B: [254, 32, 48] },
+    '农学': { A: [240, 33, 50], B: [230, 30, 45] },
+    '医学': { A: [294, 36, 108], B: [284, 33, 99] },
+    '军事学': { A: [260, 34, 51], B: [250, 31, 47] },
+    '管理学': { A: [332, 41, 62], B: [322, 38, 57] },
+    '艺术学': { A: [354, 38, 57], B: [344, 35, 53] },
+    '交叉学科': { A: [266, 35, 53], B: [256, 32, 48] }
+};
+// 单独划线的学科专业（按专业代码前 4 位匹配）
+var NL_SPECIAL = [
+    { codes: ['0801', '0806', '0807', '0815', '0818', '0819', '0824', '0825', '0826', '0827', '0828'], A: [251, 33, 50], B: [241, 30, 45], tag: '工学照顾专业' },
+    { codes: ['0403', '0452'], A: [310, 38, 114], B: [300, 35, 105], tag: '体育学/体育' },
+    { codes: ['0401', '0402'], A: [347, 48, 144], B: [337, 45, 135], tag: '教育学其他' },
+    { codes: ['1251'], A: [146, 35, 70], B: [136, 30, 60], tag: '工商管理' },
+    { codes: ['1252'], A: [168, 39, 78], B: [158, 34, 68], tag: '公共管理' },
+    { codes: ['1253', '1255', '1257'], A: [199, 51, 102], B: [189, 46, 92], tag: '会计/图情/审计' },
+    { codes: ['1254'], A: [151, 35, 70], B: [141, 30, 60], tag: '旅游管理' },
+    { codes: ['1256'], A: [166, 39, 78], B: [156, 34, 68], tag: '工程管理' }
+];
+var CAT_CODES = { '01': '哲学', '02': '经济学', '03': '法学', '04': '教育学', '05': '文学', '06': '历史学', '07': '理学', '08': '工学', '09': '农学', '10': '医学', '11': '军事学', '12': '管理学', '13': '艺术学', '14': '交叉学科' };
+// 输入规范化：门类名 / 门类代码 / 常见俗称
+function matchCategory(kw) {
+    var t = String(kw || '').trim();
+    if (!t) return '';
+    t = t.replace(/(门类|类|学科)$/, '');
+    if (/^\d{2}$/.test(t) && CAT_CODES[t]) return CAT_CODES[t];
+    if (NL_BASE[t]) return t;
+    var alias = { '工科': '工学', '理科': '理学', '文科': '', '农科': '农学', '医科': '医学', '经济': '经济学', '管理': '管理学', '艺术': '艺术学' };
+    return alias[t] || '';
+}
+function nationalLine(majorCode) {
+    var code = String(majorCode || '');
+    var cat = CAT_CODES[code.slice(0, 2)];
+    if (!cat || !NL_BASE[cat]) return null;
+    var base = NL_BASE[cat], tag = '各学科专业';
+    for (var i = 0; i < NL_SPECIAL.length; i++) {
+        if (NL_SPECIAL[i].codes.indexOf(code.slice(0, 4)) !== -1) { base = NL_SPECIAL[i]; tag = NL_SPECIAL[i].tag; break; }
+    }
+    return { year: NL_YEAR, category: cat, tag: tag, totalA: base.A[0], totalB: base.B[0], A: base.A, B: base.B };
 }
 
 var PAGE_SIZE = 100;   // 每次加载的原始记录行数
@@ -218,7 +284,15 @@ var DS = {
 function cloudPage(kw, offset, size) {
     var q = cloud.database.from('kaoyan_records').select('*');
     if (kw) {
-        q = q.or('school.ilike.%' + kw + '%,college.ilike.%' + kw + '%,major_name.ilike.%' + kw + '%,major_code.ilike.%' + kw + '%');
+        var cat = matchCategory(kw);
+        if (cat) {
+            q = q.eq('category', cat);
+        } else {
+            var k = String(kw).replace(/[*(),%]/g, ' ').trim();
+            if (k) {
+                q = q.or('school.ilike.*' + k + '*,college.ilike.*' + k + '*,major_name.ilike.*' + k + '*,major_code.ilike.*' + k + '*');
+            }
+        }
     }
     return q.order('school').order('college').order('major_code').order('id')
         .range(offset, offset + size - 1).then(function (res) {
@@ -238,8 +312,10 @@ function cloudDetail(parts) {
 // 快照分页：本地全量已加载，切片后再分组
 function snapshotPage(kw, offset, size) {
     return loadSnapshot().then(function (rows) {
+        var cat = matchCategory(kw);
         var hit = rows.filter(function (r) {
             if (!kw) return true;
+            if (cat) return CAT_CODES[String(r.major_code || '').slice(0, 2)] === cat;
             return (r.school || '').indexOf(kw) !== -1 || (r.college || '').indexOf(kw) !== -1
                 || (r.major_name || '').indexOf(kw) !== -1 || (r.major_code || '').indexOf(kw) !== -1;
         });
@@ -348,17 +424,27 @@ function render() {
 }
 
 // ---------- 首页 ----------
-var lastKeyword = '';
+var lastKeyword = (function () {
+    try {
+        var q = new URLSearchParams(location.search);
+        return q.get('kw') || '';
+    } catch (e) { return ''; }
+})();
 
 function renderIndex() {
+    var cats = Object.keys(NL_BASE);
     app.innerHTML =
         '<div class="hero"><span class="title">考研择校查询</span>' +
         '<span class="subtitle">院校 / 专业 / 分数线 / 名额 / 报录比</span></div>' +
-        '<div class="search-bar"><input id="kw" placeholder="搜索学校、学院、专业名称或代码" value="' + esc(lastKeyword) + '">' +
+        '<div class="search-bar"><input id="kw" placeholder="搜索学校、学院、专业，或直接点下方门类" value="' + esc(lastKeyword) + '">' +
         '<button id="go">搜索</button></div>' +
+        '<div class="cat-row">' + cats.map(function (c) {
+            return '<button class="cat-chip' + (lastKeyword === c ? ' on' : '') + '" data-cat="' + c + '">' + c + '</button>';
+        }).join('') + '</div>' +
         '<div class="entry-row">' +
         '<div class="entry" id="go-cmp"><span>对比清单</span><span class="arrow">›</span></div>' +
         '<div class="entry blue" id="go-fb"><span>数据反馈</span><span class="arrow">›</span></div></div>' +
+        '<div class="data-hint">研招网只公开<b>招生计划</b>与<b>考试科目</b>；<b>分数线</b>显示为教育部 2026 年国家线（2027 年线 2027 年 3 月才发布），校线/报录比/录取分需院校公示，已收录部分院校。</div>' +
         '<div id="results"><div class="state-card"><div class="spinner"></div><span class="big">正在查询…</span></div></div>' +
         '<div class="src-foot">' + (MODE === 'cloud'
             ? '数据来源：研招网硕士专业目录 · 实时云数据库<br>查不到的数据欢迎通过「数据反馈」提交'
@@ -369,6 +455,9 @@ function renderIndex() {
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { lastKeyword = input.value; doSearch(); } });
     document.getElementById('go-cmp').onclick = function () { nav('/compare'); };
     document.getElementById('go-fb').onclick = function () { nav('/feedback'); };
+    Array.prototype.forEach.call(document.querySelectorAll('.cat-chip'), function (el) {
+        el.onclick = function () { lastKeyword = el.getAttribute('data-cat'); doSearch(); };
+    });
 
     var box = document.getElementById('results');
     box.innerHTML = '<div id="res-meta" class="res-meta"></div>' +
@@ -383,15 +472,21 @@ function renderIndex() {
 
 // ---------- 结果分页加载 ----------
 function resultCardHtml(g) {
+    var hasSchoolLine = g.latestReTestLine !== null;
+    var lineVal = hasSchoolLine ? g.latestReTestLine : g.natlTotal;
+    var lineLabel = hasSchoolLine ? (g.latestYear + ' 校线') : (NL_YEAR + ' 国家线(A)');
+    var natlTxt = g.natl
+        ? (g.natl.category + (g.natl.tag !== '各学科专业' ? '·' + g.natl.tag : '') + ' · 单科 ' + g.natl.A[1] + '/' + g.natl.A[2])
+        : '';
     return '<div class="result-card" data-key="' + esc(g.key) + '">' +
         '<div class="rc-head"><span class="name">' + esc(g.major_name) + '</span><span class="code">' + esc(g.major_code) + '</span></div>' +
         '<div class="rc-meta">' + esc(g.school) + ' · ' + esc(g.college) + '<span class="tag">' + esc(g.study_mode) + '/' + esc(g.degree_type) + '</span></div>' +
         '<div class="rc-stats">' +
-        '<div class="stat"><span class="v">' + (g.latestReTestLine === null ? '—' : esc(g.latestReTestLine)) + '</span><span class="l">' + esc(g.latestYear + '复试线') + '</span></div>' +
-        '<div class="stat"><span class="v">' + (g.latestUnifiedQuota === null ? '—' : esc(g.latestUnifiedQuota)) + '</span><span class="l">' + esc(g.latestYear + '统考名额') + '</span></div>' +
+        '<div class="stat"><span class="v' + (lineVal === null ? '' : (hasSchoolLine ? '' : ' natl')) + '">' + (lineVal === null ? '—' : esc(lineVal)) + '</span><span class="l">' + esc(lineLabel) + '</span></div>' +
+        '<div class="stat"><span class="v">' + (g.latestUnifiedQuota === null ? '—' : esc(g.latestUnifiedQuota)) + '</span><span class="l">' + esc(g.latestYear + ' 统考名额') + '</span></div>' +
         '<div class="stat"><span class="v">' + (g.latestRatio === null ? '—' : esc(g.latestRatio)) + '</span><span class="l">报录比</span></div>' +
         '</div>' +
-        '<div class="rc-foot">' + esc(g.yearRange) + ' · ' + g.yearCount + ' 年数据 · 点击查看详情</div></div>';
+        '<div class="rc-foot">' + esc(g.yearRange) + ' · ' + g.yearCount + ' 年数据' + (natlTxt ? ' · ' + esc(natlTxt) : '') + ' · 点击查看详情</div></div>';
 }
 
 function bindCards(root) {
@@ -485,9 +580,15 @@ function renderDetail(key) {
             '<a class="ob-link" target="_blank" rel="noopener" href="https://yz.chsi.com.cn/zsgs/">研招信息公开平台</a>' +
             '</div></div>';
         html += d.years.map(function (y) {
+            var nl = y.natl;
+            var natlVal = y.nationalLine !== null ? y.nationalLine : (nl ? nl.totalA : null);
+            var natlLabel = nl ? (NL_YEAR + ' 国家线(A区)') : '国家线';
             return '<div class="year-card"><h3>' + esc(y.year) + ' 年' + (y.sourceGrade ? ' <span class="badge">数据来源 ' + esc(y.sourceGrade) + ' 级</span>' : '') + '</h3>' +
+                (nl ? '<div class="natl-strip">' + esc(nl.category) + (nl.tag !== '各学科专业' ? '（' + esc(nl.tag) + '）' : '') +
+                    ' · ' + NL_YEAR + ' 年国家线 A 区 <b>' + nl.totalA + '</b> 分（单科 ' + nl.A[1] + '/' + nl.A[2] + '）' +
+                    ' · B 区 <b>' + nl.totalB + '</b> 分（单科 ' + nl.B[1] + '/' + nl.B[2] + '）</div>' : '') +
                 '<div class="metric-grid">' +
-                metric(y.nationalLine, '国家线') + metric(y.retestLine, '复试线') +
+                metric(natlVal, natlLabel) + metric(y.retestLine, '院校线') +
                 metric(y.plannedTotal, '拟招生') + metric(y.recommendedExempt, '推免') +
                 metric(y.unifiedQuota, '统考名额') + metric(y.applicants, '报名人数') +
                 metric(y.retestCount, '进复试') + metric(y.admittedCount, '录取人数') +
@@ -499,7 +600,7 @@ function renderDetail(key) {
                 (y.sourceUrl ? '<div class="note-line"><b>来源：</b><a href="' + esc(y.sourceUrl) + '" target="_blank" rel="noopener">' + esc(y.sourceUrl) + '</a></div>' : '') +
                 '</div>';
         }).join('');
-        html += '<div class="src-foot">「—」表示该年份暂无此数据（区别于 0）</div>';
+        html += '<div class="src-foot">国家线为教育部 ' + NL_YEAR + ' 年公布口径（2027 年线待发布）；「—」表示该年份暂无此数据（区别于 0）</div>';
         html += '<div id="school-lines"></div>';
         body.innerHTML = html;
         DS.lines(d.school).then(function (lines) {
