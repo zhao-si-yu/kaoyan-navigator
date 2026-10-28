@@ -40,6 +40,30 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .entry { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1.5px solid #e5e8eb; border-radius: 10px; background: #fff; font-size: 13.5px; cursor: pointer; color: #374151; }
 .entry.blue { background: #f0f5ff; border-color: #d6e2ff; color: #3a5fcc; }
 .entry .arrow { color: #9ca3af; }
+.entry.green { background: #ecfdf5; border-color: #bbf7d0; color: #0f766e; }
+.sc-box { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.sc-title { font-size: 17px; font-weight: 600; }
+.sc-sub { margin-top: 4px; font-size: 12.5px; color: #6b7280; line-height: 1.65; }
+.sc-form { display: flex; gap: 8px; margin-top: 10px; }
+.sc-form input { padding: 10px 12px; border: 1.5px solid #e5e8eb; border-radius: 9px; font-size: 14px; outline: none; background: #fff; }
+.sc-form input:focus { border-color: #2f6fed; }
+.sc-form #sc-score { width: 104px; }
+.sc-form #sc-kw { flex: 1; min-width: 0; }
+.sc-form button { padding: 0 16px; border: none; border-radius: 9px; background: #2f6fed; color: #fff; font-size: 14px; cursor: pointer; white-space: nowrap; }
+.sc-tip { margin-top: 9px; font-size: 12px; color: #9ca3af; line-height: 1.65; }
+.sc-sec { margin: 16px 0 8px; font-size: 13px; font-weight: 600; color: #374151; }
+.sc-sec .n { color: #9ca3af; font-weight: 400; margin-left: 5px; }
+.sc-card { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; cursor: pointer; }
+.sc-card:hover { border-color: #c7d2fe; }
+.sc-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12.5px; color: #6b7280; }
+.sc-school { color: #1f2937; font-weight: 600; font-size: 14px; }
+.sc-major { margin-top: 4px; font-size: 13.5px; color: #1f2937; }
+.sc-major .tag { margin-left: 6px; padding: 1px 6px; background: #f0f5ff; color: #3a5fcc; border-radius: 4px; font-size: 11px; }
+.sc-stats { display: flex; gap: 14px; margin-top: 8px; font-size: 12.5px; color: #6b7280; flex-wrap: wrap; align-items: baseline; }
+.sc-stats b { color: #b91c1c; font-size: 14px; }
+.sc-stats b.mid { color: #1f2937; }
+.sc-over { font-weight: 600; color: #0f766e; }
+.sc-over.reach { color: #b45309; }
 .state-card { padding: 36px 20px; text-align: center; background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; }
 .state-card .big { font-size: 16px; font-weight: 600; display: block; }
 .state-card .desc { display: block; margin-top: 8px; font-size: 13px; color: #6b7280; line-height: 1.6; }
@@ -515,6 +539,143 @@ function toggleCompare(key) {
 }
 function save(list) { localStorage.setItem('kaoyan_compare', JSON.stringify(list.slice(0, COMPARE_LIMIT))); }
 
+// ---------- 按分数选校 ----------
+var SCORE_DEFAULT = 350;
+var SCORE_BAND_DOWN = 60;   // 只取分数下方 60 分内（再低就是浪费志愿）
+var SCORE_BAND_UP = 15;     // 上方 15 分内（可冲）
+var SCORE_PAGE_LIMIT = 900; // 单次最多取回记录数（分数区间内总量远大于此，取分数最高的部分）
+
+function scoreQuery(score, kw) {
+    var k = String(kw || '').replace(/[*(),%]/g, ' ').trim();
+    var lo = String(Math.max(0, score - SCORE_BAND_DOWN));
+    var hi = String(score + SCORE_BAND_UP);
+    if (MODE === 'cloud') {
+        // admitted_min 是文本列；数值区间在三/四位数下与字典序基本一致，取回后再做一次数值校验
+        var q = cloud.database.from('kaoyan_records').select('*');
+        if (k) q = q.or('school.ilike.*' + k + '*,college.ilike.*' + k + '*,major_name.ilike.*' + k + '*,major_code.ilike.*' + k + '*');
+        return q.gte('admitted_min', lo).lte('admitted_min', hi)
+            .order('admitted_min', { ascending: false }).range(0, SCORE_PAGE_LIMIT - 1)
+            .then(function (res) {
+                if (res.error) throw res.error;
+                return res.data || [];
+            });
+    }
+    return loadSnapshot().then(function (rows) {
+        return rows.filter(function (r) {
+            if (toNumber(r.admitted_min) === null) return false;
+            if (!k) return true;
+            return (r.school || '').indexOf(k) !== -1 || (r.college || '').indexOf(k) !== -1
+                || (r.major_name || '').indexOf(k) !== -1 || (r.major_code || '').indexOf(k) !== -1;
+        });
+    });
+}
+
+function scorePick(rows, score, kw) {
+    var k = String(kw || '');
+    var best = {}, order = [];
+    (rows || []).forEach(function (r) {
+        var mn = toNumber(r.admitted_min);
+        if (mn === null) return;
+        if (mn > score + SCORE_BAND_UP) return;          // 文本比较的兜底校验
+        if (mn < score - SCORE_BAND_DOWN) return;
+        if (String(r.year) !== NL_YEAR) return;          // 只用最新录取年份
+        if (k && (r.school || '').indexOf(k) === -1 && (r.college || '').indexOf(k) === -1
+            && (r.major_name || '').indexOf(k) === -1 && (r.major_code || '').indexOf(k) === -1) return;
+        var gk = [r.school, r.college, r.major_code, r.major_name, r.study_mode].join('|');
+        if (!best[gk]) { best[gk] = r; order.push(gk); }
+        else if (mn > toNumber(best[gk].admitted_min)) best[gk] = r;
+    });
+    return order.map(function (g) { return best[g]; })
+        .sort(function (a, b) { return toNumber(b.admitted_min) - toNumber(a.admitted_min); });
+}
+
+function scoreCardHtml(r, score, reach) {
+    var mn = toNumber(r.admitted_min), md = toNumber(r.admitted_median), ac = toNumber(r.admitted_count);
+    var diff = (mn === null) ? null : score - mn;
+    var key = [r.school, r.college, r.major_code, r.major_name, r.study_mode].join('|');
+    var overTxt = diff === null ? ''
+        : reach ? '差 ' + (-diff) + ' 分'
+        : (diff === 0 ? '刚好压线' : '高出 ' + diff + ' 分');
+    return '<div class="sc-card" data-key="' + esc(key) + '">' +
+        '<div class="sc-head"><span class="sc-school">' + esc(r.school) + '</span>' +
+        '<span>' + esc(r.college || '') + '</span></div>' +
+        '<div class="sc-major">' + (r.major_code ? '<b>' + esc(r.major_code) + '</b> ' : '') + esc(r.major_name) +
+        (r.study_mode ? '<span class="tag">' + esc(r.study_mode) + '</span>' : '') + '</div>' +
+        '<div class="sc-stats">' +
+        '<span>录取 <b class="mid">' + (ac === null ? '—' : ac) + '</b> 人</span>' +
+        '<span>最低 <b>' + (mn === null ? '—' : mn) + '</b> 分</span>' +
+        '<span>中位 <b class="mid">' + (md === null ? '—' : md) + '</b> 分</span>' +
+        '<span class="sc-over' + (reach ? ' reach' : '') + '">' + esc(overTxt) + '</span>' +
+        '</div></div>';
+}
+
+function renderScore(q) {
+    q = q || {};
+    var score = toNumber(q.score);
+    if (score === null || score < 100 || score > 500) score = SCORE_DEFAULT;
+    var kw = q.kw || '';
+
+    app.innerHTML = '<span class="back-link" onclick="location.hash=\'/\'">‹ 返回搜索</span>' +
+        '<div class="sc-box"><div class="sc-title">按分数选校</div>' +
+        '<div class="sc-sub">输入初试总分，反查 2026 年<b>已公布录取分数</b>的专业：能录上的（稳妥）与差一点的（可冲）。分差 = 你的分数 − 该校此专业实际录取最低分。</div>' +
+        '<div class="sc-form">' +
+        '<input id="sc-score" type="number" min="100" max="500" step="1" value="' + esc(score) + '" placeholder="总分">' +
+        '<input id="sc-kw" value="' + esc(kw) + '" placeholder="专业关键词（可选），如 计算机 / 0854">' +
+        '<button id="sc-go">查询</button></div>' +
+        '<div class="sc-tip">范围：你分数下方 ' + SCORE_BAND_DOWN + ' 分 ~ 上方 ' + SCORE_BAND_UP + ' 分。目前 64 所院校、3000+ 条 2026 年录取记录可用；管理类联考（MBA/MPA/会计等）为 300 分制，请按 300 分换算后不要直接比对。</div>' +
+        '</div>' +
+        '<div id="sc-meta" class="res-meta"></div><div id="sc-list"></div>';
+
+    function go() {
+        var v = document.getElementById('sc-score').value;
+        var k2 = document.getElementById('sc-kw').value.trim();
+        nav('/score?score=' + encodeURIComponent(v) + '&kw=' + encodeURIComponent(k2));
+    }
+    document.getElementById('sc-go').onclick = go;
+    document.getElementById('sc-score').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+    document.getElementById('sc-kw').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+
+    var list = document.getElementById('sc-list');
+    var meta = document.getElementById('sc-meta');
+    list.innerHTML = '<div class="state-card"><div class="spinner"></div><span class="big">正在查询…</span></div>';
+
+    scoreQuery(score, kw).then(function (rows) {
+        var picked = scorePick(rows, score, kw);
+        var safe = picked.filter(function (r) { return toNumber(r.admitted_min) <= score; });
+        var reach = picked.filter(function (r) { return toNumber(r.admitted_min) > score; }).reverse();
+
+        if (!picked.length) {
+            list.innerHTML = '<div class="state-card"><span class="big">这个区间没有匹配的专业</span>' +
+                '<span class="desc">只收录了已公布录取分数的院校（64 所）。换成其它分数或去掉关键词再试。</span></div>';
+            if (meta) meta.innerHTML = '';
+            return;
+        }
+        meta.innerHTML = '你的分数 <b>' + esc(score) + '</b> · 稳妥 <b>' + safe.length + '</b> 个专业 · 可冲 <b>' + reach.length + '</b> 个' +
+            (kw ? ' · 关键词「' + esc(kw) + '」' : '') +
+            (rows.length >= SCORE_PAGE_LIMIT
+                ? '<br><span style="color:#b45309">区间内共有上千条记录，这里只取录取分最高的 ' + SCORE_PAGE_LIMIT + ' 条；加个专业关键词能看全该专业的情况</span>'
+                : '');
+
+        var html = '';
+        if (safe.length) {
+            html += '<div class="sc-sec">稳妥：2026 年录取最低分不高于你<span class="n">' + safe.length + ' 个</span></div>' +
+                safe.map(function (r) { return scoreCardHtml(r, score, false); }).join('');
+        }
+        if (reach.length) {
+            html += '<div class="sc-sec">可冲：最低分比你高，但差距在 ' + SCORE_BAND_UP + ' 分内<span class="n">' + reach.length + ' 个</span></div>' +
+                reach.map(function (r) { return scoreCardHtml(r, score, true); }).join('');
+        }
+        list.innerHTML = html;
+        Array.prototype.forEach.call(list.querySelectorAll('.sc-card'), function (el) {
+            el.onclick = function () { nav('/detail?key=' + encodeURIComponent(el.getAttribute('data-key'))); };
+        });
+    }).catch(function (err) {
+        console.error(err);
+        list.innerHTML = '<div class="state-card"><span class="big">查询失败</span>' +
+            '<span class="desc">网络或数据服务暂时不可用，稍后重试。</span></div>';
+    });
+}
+
 // ---------- 路由 ----------
 function nav(hash) { location.hash = hash; }
 window.addEventListener('hashchange', render);
@@ -548,6 +709,7 @@ var FEEDBACK_TYPES = [
 function render() {
     var r = parseHash();
     if (r.path === 'detail') return renderDetail(r.query.key);
+    if (r.path === 'score') return renderScore(r.query);
     if (r.path === 'compare') return renderCompare();
     if (r.path === 'feedback') return renderFeedback(r.query.school || '');
     renderIndex();
@@ -572,6 +734,7 @@ function renderIndex() {
             return '<button class="cat-chip' + (lastKeyword === c ? ' on' : '') + '" data-cat="' + c + '">' + c + '</button>';
         }).join('') + '</div>' +
         '<div class="entry-row">' +
+        '<div class="entry green" id="go-score"><span>按分数选校</span><span class="arrow">›</span></div>' +
         '<div class="entry" id="go-cmp"><span>对比清单</span><span class="arrow">›</span></div>' +
         '<div class="entry blue" id="go-fb"><span>数据反馈</span><span class="arrow">›</span></div></div>' +
         '<div class="data-hint">分数线按精度显示：<b>专业线</b>（院校按专业公布的总分线）→ <b>校线</b>（34 所自划线院校的校线，全量收录）→ <b>' + NL_YEAR + ' 年国家线</b>。研招网只公开<b>招生计划</b>与<b>考试科目</b>；2027 年线要 2027 年 3 月才发布。报录比仅院校自愿公布，多数为「—」。</div>' +
@@ -583,6 +746,7 @@ function renderIndex() {
     var input = document.getElementById('kw');
     document.getElementById('go').onclick = function () { lastKeyword = input.value; doSearch(); };
     input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { lastKeyword = input.value; doSearch(); } });
+    document.getElementById('go-score').onclick = function () { nav('/score'); };
     document.getElementById('go-cmp').onclick = function () { nav('/compare'); };
     document.getElementById('go-fb').onclick = function () { nav('/feedback'); };
     Array.prototype.forEach.call(document.querySelectorAll('.cat-chip'), function (el) {
