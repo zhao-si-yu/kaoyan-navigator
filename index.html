@@ -82,6 +82,7 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .lines-box { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
 .lb-head { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
 .lb-tip { font-size: 12.5px; color: #b45309; background: #fff4e5; border-radius: 8px; padding: 7px 10px; margin-bottom: 8px; line-height: 1.6; }
+.lb-gap { display: block; margin-top: 4px; font-weight: 600; color: #0f766e; }
 .lb-scroll { overflow-x: auto; max-height: 440px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .line-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
 .line-table th, .line-table td { border: 1px solid #eef0f3; padding: 6px 8px; text-align: center; }
@@ -769,7 +770,14 @@ function renderDetail(key) {
         body.innerHTML = html;
         DS.lines(d.school).then(function (lines) {
             var el = document.getElementById('school-lines');
-            if (el) el.innerHTML = linesHtml(lines, d.major_code, d.school);
+            // 取最近一个有录取数据的年份（d.years 已按年份倒序）
+            var am = null, ay = null;
+            (d.years || []).forEach(function (rr) {
+                if (am === null && rr.admittedMin !== null && rr.admittedMin !== undefined) {
+                    am = rr.admittedMin; ay = rr.year;
+                }
+            });
+            if (el) el.innerHTML = linesHtml(lines, d.major_code, d.school, am, ay);
         });
         document.getElementById('cmp-btn').onclick = function () {
             var res = toggleCompare(key);
@@ -793,7 +801,7 @@ var CAT_NAME = {
     '11': '军事学', '12': '管理学', '13': '艺术学', '14': '交叉学科'
 };
 
-function linesHtml(rows, majorCode, school) {
+function linesHtml(rows, majorCode, school, admittedMin, admitYear) {
     if (!rows || !rows.length) {
         return '<div class="lines-box"><div class="lb-head">' + esc(school) + ' 复试基本分数线</div>' +
             '<div class="lb-empty">暂未收录该校分数线。可点上方「查复试分数线」查看院校官方原文。</div></div>';
@@ -841,8 +849,30 @@ function linesHtml(rows, majorCode, school) {
             ? '你查的专业（' + (m0.college ? esc(m0.college) + ' · ' : '') + esc(m0.category) +
               (m0.major_code ? ' [' + esc(m0.major_code) + ']' : '') + '）'
             : '你查的专业属「' + esc(myCat) + '」';
+        // 录取最低分与校线的分差：回答「过线多少分才稳」
+        var gapHtml = '';
+        var lt = toNumber(m0.total), am = toNumber(admittedMin);
+        // 管理类联考（1251-1257、0257）为 300 分制，未精确匹配到该校专业线时不可与管理学门类线相减
+        var MGMT = ['1251', '1252', '1253', '1254', '1255', '1256', '1257', '0257'];
+        var isMgmt = MGMT.indexOf(String(majorCode || '').slice(0, 4)) !== -1;
+        var comparable = exact || !isMgmt;
+        // 管理类联考专业若未单独公布线，上表「管理学」是学术学位门类线，需明确说明避免误读
+        var mgmtNote = (!exact && isMgmt)
+            ? '。注意：该校未单独公布管理类联考线，上表「管理学」为学术学位门类线，MBA/MPA/会计等 300 分制专业不适用'
+            : '';
+        if (lt && am && comparable) {
+            var gap = am - lt;
+            // 只在合理区间展示：负值多为「综合成绩」口径，超过 120 分多为统计口径差异
+            if (gap >= 0 && gap <= 120) {
+                var ay = admitYear || y;
+                var txt = gap > 0
+                    ? '该校此专业 ' + ay + ' 年实际录取最低分 ' + am + ' 分，比校线高 ' + gap + ' 分'
+                    : '该校此专业 ' + ay + ' 年实际录取最低分 ' + am + ' 分，与校线持平';
+                gapHtml = '<span class="lb-gap">' + esc(txt) + '</span>';
+            }
+        }
         tip = '<div class="lb-tip">' + who + '，该校 ' + esc(y) + ' 年校线：总分 ' +
-            esc(m0.total || '—') + ' 分' + (m0.note ? '（' + esc(m0.note) + '）' : '') + '</div>';
+            esc(m0.total || '—') + ' 分' + (m0.note ? '（' + esc(m0.note) + '）' : '') + mgmtNote + gapHtml + '</div>';
     }
 
     return '<div class="lines-box"><div class="lb-head">' + esc(school) + ' ' + esc(y) + ' 年复试基本分数线</div>' + tip +
