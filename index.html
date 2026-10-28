@@ -34,6 +34,7 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .pro-sub { font-size: 12.5px; color: #4b5563; margin-left: 4px; }
 .pro-foot { font-size: 11.5px; color: #6b7280; margin-top: 8px; line-height: 1.6; }
 .rc-stats .v.sch { color: #1d4ed8; }
+.rc-stats .v.admit { color: #b91c1c; }
 .line-tag { background: #eef4ff !important; color: #2f6fed !important; border-color: #c7d2fe !important; }
 .natl-strip { font-size: 12.5px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; line-height: 1.6; }
 .entry { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1.5px solid #e5e8eb; border-radius: 10px; background: #fff; font-size: 13.5px; cursor: pointer; color: #374151; }
@@ -81,10 +82,10 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 .lines-box { background: #fff; border: 1.5px solid #e5e8eb; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
 .lb-head { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
 .lb-tip { font-size: 12.5px; color: #b45309; background: #fff4e5; border-radius: 8px; padding: 7px 10px; margin-bottom: 8px; line-height: 1.6; }
-.lb-scroll { overflow-x: auto; }
+.lb-scroll { overflow-x: auto; max-height: 440px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .line-table { width: 100%; border-collapse: collapse; font-size: 12.5px; white-space: nowrap; }
 .line-table th, .line-table td { border: 1px solid #eef0f3; padding: 6px 8px; text-align: center; }
-.line-table th { background: #f8fafc; font-weight: 600; }
+.line-table th { background: #f8fafc; font-weight: 600; position: sticky; top: 0; z-index: 1; }
 .line-table td:nth-child(2) { text-align: left; }
 .line-table tr.hl td { background: #f0f5ff; font-weight: 600; color: #3a5fcc; }
 .lb-foot { font-size: 11.5px; color: #9ca3af; margin-top: 8px; line-height: 1.6; }
@@ -160,6 +161,11 @@ function summarize(rows) {
     var natl = nationalLine(latest.major_code);
     var quota = toNumber(latest.unified_quota);
     if (quota === null) quota = toNumber(latest.planned_total);
+    // 拟录取数据通常落在较早年份（当年名单），与招生目录年份不同步，单独取最近一年有录取的
+    var admitRow = null;
+    for (var i = 0; i < sorted.length; i++) {
+        if (toNumber(sorted[i].admitted_count) !== null) { admitRow = sorted[i]; break; }
+    }
     return {
         key: groupKey(latest),
         school: latest.school, college: latest.college,
@@ -171,6 +177,9 @@ function summarize(rows) {
         latestReTestLine: toNumber(latest.retest_line),
         latestUnifiedQuota: quota,
         latestRatio: ratio(latest),
+        admitYear: admitRow ? admitRow.year : null,
+        admitted: admitRow ? toNumber(admitRow.admitted_count) : null,
+        admittedMin: admitRow ? toNumber(admitRow.admitted_min) : null,
         natl: natl,
         natlTotal: natl ? natl.totalA : null,
         natlTag: natl ? natl.tag : '',
@@ -426,6 +435,12 @@ function snapshotPage(kw, offset, size) {
             return (r.school || '').indexOf(kw) !== -1 || (r.college || '').indexOf(kw) !== -1
                 || (r.major_name || '').indexOf(kw) !== -1 || (r.major_code || '').indexOf(kw) !== -1;
         });
+        // 先按专业 key 聚拢（key 内年份降序），再切片，保证同组数据不被分页切断
+        hit.sort(function (a, b) {
+            var ka = groupKey(a), kb = groupKey(b);
+            if (ka !== kb) return ka < kb ? -1 : 1;
+            return Number(b.year) - Number(a.year);
+        });
         var slice = hit.slice(offset, offset + size);
         return { groups: groupRows(slice), count: slice.length, total: hit.length };
     });
@@ -449,9 +464,10 @@ function groupRows(rows) {
         groups[k].push(r);
     });
     var out = order.map(function (k) { return summarize(groups[k]); });
-    // 已收录校线的排前面，让有分数的先被看到
+    // 有拟录取数据的排最前，其次是有校线的，让有分数的先被看到
     out.sort(function (a, b) {
-        var sa = a.schoolLine ? 1 : 0, sb = b.schoolLine ? 1 : 0;
+        var sa = (a.admitted !== null ? 2 : 0) + (a.schoolLine ? 1 : 0);
+        var sb = (b.admitted !== null ? 2 : 0) + (b.schoolLine ? 1 : 0);
         return sb - sa;
     });
     return out;
@@ -557,7 +573,7 @@ function renderIndex() {
         '<div class="entry-row">' +
         '<div class="entry" id="go-cmp"><span>对比清单</span><span class="arrow">›</span></div>' +
         '<div class="entry blue" id="go-fb"><span>数据反馈</span><span class="arrow">›</span></div></div>' +
-        '<div class="data-hint">分数线按精度显示：<b>专业线</b>（院校按专业公布的总分线）→ <b>校线</b>（34 所自划线院校的门类线，已收录 33 所）→ <b>' + NL_YEAR + ' 年国家线</b>。研招网只公开<b>招生计划</b>与<b>考试科目</b>；2027 年线要 2027 年 3 月才发布。报录比仅院校自愿公布，多数为「—」。</div>' +
+        '<div class="data-hint">分数线按精度显示：<b>专业线</b>（院校按专业公布的总分线）→ <b>校线</b>（34 所自划线院校的校线，全量收录）→ <b>' + NL_YEAR + ' 年国家线</b>。研招网只公开<b>招生计划</b>与<b>考试科目</b>；2027 年线要 2027 年 3 月才发布。报录比仅院校自愿公布，多数为「—」。</div>' +
         '<div id="results"><div class="state-card"><div class="spinner"></div><span class="big">正在查询…</span></div></div>' +
         '<div class="src-foot">' + (MODE === 'cloud'
             ? '数据来源：研招网硕士专业目录 · 实时云数据库<br>查不到的数据欢迎通过「数据反馈」提交'
@@ -616,7 +632,10 @@ function resultCardHtml(g) {
         '<div class="rc-stats">' +
         '<div class="stat"><span class="v' + cls + '">' + (lineVal === null ? '—' : esc(lineVal)) + '</span><span class="l">' + esc(lineLabel) + '</span></div>' +
         '<div class="stat"><span class="v">' + (g.latestUnifiedQuota === null ? '—' : esc(g.latestUnifiedQuota)) + '</span><span class="l">' + esc(g.latestYear + ' 统考名额') + '</span></div>' +
-        '<div class="stat"><span class="v">' + (g.latestRatio === null ? '—' : esc(g.latestRatio)) + '</span><span class="l">报录比</span></div>' +
+        (g.admitted !== null
+            ? '<div class="stat"><span class="v admit">' + esc(g.admitted) + '</span><span class="l">' + esc(g.admitYear + ' 录取人数') + '</span></div>' +
+              '<div class="stat"><span class="v">' + (g.admittedMin === null ? '—' : esc(g.admittedMin)) + '</span><span class="l">录取最低分</span></div>'
+            : '<div class="stat"><span class="v">' + (g.latestRatio === null ? '—' : esc(g.latestRatio)) + '</span><span class="l">报录比</span></div>') +
         '</div>' +
         '<div class="rc-foot">' + esc(g.yearRange) + ' · ' + g.yearCount + ' 年数据' + (natlTxt ? ' · ' + esc(natlTxt) : '') + ' · 点击查看详情</div></div>';
 }
@@ -783,27 +802,48 @@ function linesHtml(rows, majorCode, school) {
     rows.forEach(function (r) { if (years.indexOf(r.year) === -1) years.push(r.year); });
     var y = years[0];
     var cur = rows.filter(function (r) { return r.year === y; });
+    // 专业级校线（如武大）按专业码排序，便于阅读；门类级校线保持官方原序
+    var coded = cur.filter(function (r) { return r.major_code; }).length;
+    if (coded > 0 && coded * 2 >= cur.length) {
+        cur = cur.slice().sort(function (a, b) {
+            return String(a.major_code || '').localeCompare(String(b.major_code || ''));
+        });
+    }
     var myCat = CAT_NAME[String(majorCode || '').slice(0, 2)] || '';
 
     function hit(r) {
+        var mc = String(majorCode || '').slice(0, 4);
+        if (mc && r.major_code) return String(r.major_code).slice(0, 4) === mc;
         if (!myCat) return false;
         return r.category === myCat || r.category === myCat + '各学科专业'
             || (r.degree_type === '专业学位' && String(r.category).indexOf(myCat) === 0);
     }
 
     var body = cur.map(function (r) {
+        var label = (r.college ? esc(r.college) + ' · ' : '') + esc(r.category) +
+            (r.major_code ? ' [' + esc(r.major_code) + ']' : '');
         return '<tr' + (hit(r) ? ' class="hl"' : '') + '><td>' + esc(r.degree_type || '') + '</td>' +
-            '<td>' + esc(r.category) + (r.major_code ? ' [' + esc(r.major_code) + ']' : '') + '</td>' +
+            '<td>' + label + '</td>' +
             '<td>' + esc(r.total || '—') + '</td><td>' + esc(r.politics || '—') + '</td>' +
             '<td>' + esc(r.foreign_lang || '—') + '</td><td>' + esc(r.subject1 || '—') + '</td>' +
             '<td>' + esc(r.subject2 || '—') + '</td></tr>';
     }).join('');
 
     var mine = cur.filter(hit);
-    var tip = mine.length
-        ? '<div class="lb-tip">你查的专业属「' + esc(myCat) + '」，该校 ' + esc(y) + ' 年校线：总分 ' +
-          esc(mine[0].total || '—') + ' 分' + (mine[0].note ? '（' + esc(mine[0].note) + '）' : '') + '</div>'
-        : '';
+    var tip = '';
+    if (mine.length) {
+        var mc4 = String(majorCode || '').slice(0, 4);
+        var m0 = mine.filter(function (r) {
+            return r.major_code && String(r.major_code).slice(0, 4) === mc4;
+        })[0] || mine[0];
+        var exact = m0.major_code && String(m0.major_code).slice(0, 4) === mc4;
+        var who = exact
+            ? '你查的专业（' + (m0.college ? esc(m0.college) + ' · ' : '') + esc(m0.category) +
+              (m0.major_code ? ' [' + esc(m0.major_code) + ']' : '') + '）'
+            : '你查的专业属「' + esc(myCat) + '」';
+        tip = '<div class="lb-tip">' + who + '，该校 ' + esc(y) + ' 年校线：总分 ' +
+            esc(m0.total || '—') + ' 分' + (m0.note ? '（' + esc(m0.note) + '）' : '') + '</div>';
+    }
 
     return '<div class="lines-box"><div class="lb-head">' + esc(school) + ' ' + esc(y) + ' 年复试基本分数线</div>' + tip +
         '<div class="lb-scroll"><table class="line-table"><thead><tr>' +
