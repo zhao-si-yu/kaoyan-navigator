@@ -293,16 +293,26 @@ function indexLines(rows) {
 function loadAllLines() {
     if (ALL_LINES) return Promise.resolve(ALL_LINES);
     if (MODE === 'cloud') {
-        return cloud.database.from('kaoyan_school_lines').select('*').limit(3000)
-            .then(function (res) {
-                if (res.error) throw res.error;
-                ALL_LINES = indexLines(res.data);
-                return ALL_LINES;
-            }).catch(function (err) {
-                console.warn('校线预取失败', err);
-                ALL_LINES = {};
-                return ALL_LINES;
-            });
+        var acc = [], STEP = 1000;
+        function page(from) {
+            return cloud.database.from('kaoyan_school_lines').select('*')
+                .order('school', { ascending: true }).range(from, from + STEP - 1)
+                .then(function (res) {
+                    if (res.error) throw res.error;
+                    var d = res.data || [];
+                    acc = acc.concat(d);
+                    if (d.length < STEP) return acc;
+                    return page(from + STEP);
+                });
+        }
+        return page(0).then(function (rows) {
+            ALL_LINES = indexLines(rows);
+            return ALL_LINES;
+        }).catch(function (err) {
+            console.warn('校线预取失败', err);
+            ALL_LINES = {};
+            return ALL_LINES;
+        });
     }
     return loadLines().then(function (rows) {
         ALL_LINES = indexLines(rows);
@@ -346,15 +356,24 @@ function loadAllMajorLines() {
     if (ALL_MLINES) return Promise.resolve(ALL_MLINES);
     var done = function (rows) { ALL_MLINES = indexMajorLines(rows); return ALL_MLINES; };
     if (MODE === 'cloud') {
-        return cloud.database.from('kaoyan_major_lines').select('*').limit(6000)
-            .then(function (res) {
-                if (res.error) throw res.error;
-                return done(res.data);
-            }).catch(function (err) {
-                console.warn('专业线预取失败', err);
-                ALL_MLINES = {};
-                return ALL_MLINES;
-            });
+        // 服务端单次查询有行数上限，分段取（每段 1000 行）比一次 limit(6000) 稳
+        var all = [], STEP = 1000, FIELDS = 'school,major_code,major_name,college,study_mode,degree_type,total,year';
+        function page(from) {
+            return cloud.database.from('kaoyan_major_lines').select(FIELDS)
+                .order('school', { ascending: true }).range(from, from + STEP - 1)
+                .then(function (res) {
+                    if (res.error) throw res.error;
+                    var d = res.data || [];
+                    all = all.concat(d);
+                    if (d.length < STEP || all.length >= 6000) return all;
+                    return page(from + STEP);
+                });
+        }
+        return page(0).then(done).catch(function (err) {
+            console.warn('专业线预取失败', err);
+            ALL_MLINES = {};
+            return ALL_MLINES;
+        });
     }
     return fetch('data/major_lines.json').then(function (r) { return r.json(); })
         .then(done).catch(function () { ALL_MLINES = {}; return ALL_MLINES; });
@@ -609,9 +628,12 @@ function scoreCardHtml(r, score, reach) {
         '</div></div>';
 }
 
-// ---------- 降级：没有录取分数据时，用校线 + 历史分差中位估算 ----------
-var LINE_GAP_MEDIAN = 31;   // 2026 年 733 条「录取最低分 − 对应校线」的中位数
-// 关键词 → 门类（用户输的是专业俗称，校线里只有门类/专业代码）
+// ---------- 降级：没有录取分数据时，用专业线 / 校线 + 历史分差估算 ----------
+// 口径来源：本地快照里同时有「专业线 + 录取最低分」的 198 个专业，差值中位 5 分、75% 在 14 分内；
+// 「校线 + 录取最低分」的 733 条样本中位差 31 分。所以专业线更准，优先用它。
+var GAP_MAJOR = 10;
+var GAP_SCHOOL = 31;
+// 关键词 → 门类（校线只有门类/学科代码，用户输的是专业俗称）
 var KW_TOPIC = [
     { cat: '工学', re: /计算机|软件|人工智能|网络空间|信息安全|数据科学|大数据|电子信息|通信|控制|自动化|电气|机械|车辆|材料|冶金|动力|热能|土木|建筑|城乡规划|水利|测绘|化工|地质工程|矿业|石油|纺织|轻工|交通运输|船舶|航空|航天|兵器|核科学|农业工程|林业工程|环境工程|环境科学|生物医学工程|食品|安全科学|光电|光学工程|仪器|电子科学|智能制造|机器人/ },
     { cat: '医学', re: /临床|口腔|公共卫生|护理|药学|中医|中西医|基础医学|麻醉|影像|检验|康复|特种医学|法医|全科/ },
@@ -633,7 +655,6 @@ function kwTopic(kw) {
     if (!t) return null;
     var c = matchCategory(t);
     if (c) return { cat: c };
-    // 用户直接输学科代码（如 0812 / 0854）时按代码定门类
     var m4 = t.match(/^(\d{4})$/);
     if (m4) { var cc = CAT_CODES[m4[1].slice(0, 2)]; if (cc) return { cat: cc }; }
     for (var i = 0; i < KW_TOPIC.length; i++) {
@@ -642,33 +663,63 @@ function kwTopic(kw) {
     return null;
 }
 function __scKw(k) { lastKeyword = k; nav('/'); }
+function flatLines(box) {
+    var out = [];
+    Object.keys(box || {}).forEach(function (k) { out = out.concat(box[k] || []); });
+    return out;
+}
 
-// 用校线兜底估算：录取分 ≈ 校线 + LINE_GAP_MEDIAN
+// 录取分估算：有专业线用专业线 + GAP_MAJOR；只有校线时用校线 + GAP_SCHOOL
 function scoreEstimate(score, kw) {
-    return loadAllLines().then(function (box) {
-        var rows = [];
-        Object.keys(box || {}).forEach(function (s) { rows = rows.concat(box[s] || []); });
-        var topic = kwTopic(kw);
-        var code4 = (String(kw || '').match(/\d{4}/) || [])[0] || '';
+    return Promise.all([loadAllMajorLines(), loadAllLines()]).then(function (res) {
+        var majors = flatLines(res[0]), lines = flatLines(res[1]);
+        var k = String(kw || '').trim();
+        var topic = kwTopic(k);
+        var code4 = (k.match(/\d{4}/) || [])[0] || '';
         var cand = [], seen = {};
-        rows.forEach(function (L) {
+
+        function push(L, tot, gap, src) {
+            var est = tot + gap;
+            if (est > score + SCORE_BAND_UP) return;               // 换算后仍够不着，列出没意义
+            if (est < score - SCORE_BAND_DOWN) return;             // 富余太多，不算有效志愿
+            var item = { L: L, tot: tot, est: est, src: src };
+            var gk = [L.school, L.major_code || L.category, L.degree_type].join('|');
+            var old = seen[gk];
+            if (!old) { seen[gk] = item; cand.push(item); return; }
+            if (src === 'major') {
+                if (old.src === 'major' && tot <= old.tot) return;   // 同源取最高线
+            } else {
+                if (old.src === 'major') return;                     // 专业线优先，校线不覆盖
+                if (tot <= old.tot) return;
+            }
+            cand[cand.indexOf(old)] = item;
+            seen[gk] = item;
+        }
+
+        majors.forEach(function (L) {
+            var tot = toNumber(L.total);
+            if (tot === null || tot < 100 || tot > 500) return;   // 初试总分上限 500（管理类联考 300）
+            if (L.year && String(L.year) !== NL_YEAR) return;
+            var code = String(L.major_code || '');
+            if (code4) { if (code.indexOf(code4) !== 0) return; }
+            else if (k) {
+                var nm = String(L.major_name || ''), col = String(L.college || '');
+                if (nm.indexOf(k) === -1 && col.indexOf(k) === -1 && code.indexOf(k) === -1) return;
+            }
+            push(L, tot, GAP_MAJOR, 'major');
+        });
+        lines.forEach(function (L) {
             var tot = toNumber(L.total);
             if (tot === null || tot <= 0) return;
             if (L.year && String(L.year) !== NL_YEAR) return;
             var cat = String(L.category || ''), code = String(L.major_code || '');
-            if (code4) {
-                if (code.indexOf(code4) !== 0) return;
-            } else if (topic) {
-                var okCat = cat.indexOf(topic.cat) !== -1 || CAT_CODES[code.slice(0, 2)] === topic.cat;
+            if (code4) { if (code.indexOf(code4) !== 0) return; }
+            else if (k) {
+                var okCat = cat.indexOf(k) !== -1
+                    || (topic && (cat.indexOf(topic.cat) !== -1 || CAT_CODES[code.slice(0, 2)] === topic.cat));
                 if (!okCat) return;
             }
-            var est = tot + LINE_GAP_MEDIAN;
-            if (est > score + SCORE_BAND_UP) return;               // 换算后仍够不着，列出没意义
-            if (est < score - SCORE_BAND_DOWN) return;             // 估算值富余太多，不算有效志愿
-            var gk = [L.school, L.category, L.major_code, L.degree_type].join('|');
-            var item = { L: L, tot: tot, est: est };
-            if (!seen[gk]) { seen[gk] = item; cand.push(item); }
-            else if (tot > seen[gk].tot) { cand[cand.indexOf(seen[gk])] = item; seen[gk] = item; }
+            push(L, tot, GAP_SCHOOL, 'school');
         });
         cand.sort(function (a, b) { return (b.est - a.est) || (b.tot - a.tot); });
         return { cand: cand, topic: topic, code4: code4 };
@@ -681,11 +732,11 @@ function renderScoreFallback(score, kw, list, meta) {
     var kwTxt = kw ? ' · 关键词「' + esc(kw) + '」' : '';
     if (meta) meta.innerHTML = '你的分数 <b>' + esc(score) + '</b>' + kwTxt + ' · 该区间暂无已公布的录取分';
     var head = '<div class="state-card"><span class="big">这个区间没有已公布录取分的专业</span>' +
-        '<span class="desc">录取分数目前只覆盖 64 所院校。下面改用<b>校线 + 历史分差</b>给你估算一个范围，仅供定位，不是录取数据。</span>' +
+        '<span class="desc">录取分数目前只覆盖 64 所院校。下面改用<b>专业线 / 校线</b>换算一个范围，仅供定位，不是录取数据。</span>' +
         (kw ? '<div style="margin-top:10px"><span class="back-link" id="sc-tokw">去搜索「' + esc(kw) + '」相关的招生院校 ›</span></div>' : '') +
         '</div>';
     list.innerHTML = head +
-        '<div id="sc-fb"><div class="state-card"><div class="spinner"></div><span class="big">正在用校线估算…</span></div></div>';
+        '<div id="sc-fb"><div class="state-card"><div class="spinner"></div><span class="big">正在用专业线估算…</span></div></div>';
     var tokw = document.getElementById('sc-tokw');
     if (tokw) tokw.onclick = function () { __scKw(kw); };
     var box = document.getElementById('sc-fb');
@@ -702,7 +753,7 @@ function renderScoreFallback(score, kw, list, meta) {
                 '</div>';
         }
         if (!cand.length) {
-            html += '<div class="state-card"><span class="big">校线估算也没有匹配项</span>' +
+            html += '<div class="state-card"><span class="big">线数据也换算不出匹配项</span>' +
                 '<span class="desc">' + (kw ? '换个关键词或去掉关键词再试；' : '') +
                 '也可以先看看这个分数段有哪些学校在招，或者提交一条数据反馈。</span>' +
                 '<div style="margin-top:12px"><span class="back-link" onclick="nav(\'/feedback\')">提交数据反馈 ›</span></div></div>';
@@ -712,23 +763,29 @@ function renderScoreFallback(score, kw, list, meta) {
 
         var safe = cand.filter(function (x) { return x.est <= score; });
         var reach = cand.filter(function (x) { return x.est > score; }).reverse();
+        var nMajor = cand.filter(function (x) { return x.src === 'major'; }).length;
+        var nSchool = cand.length - nMajor;
         var LIMIT = 25;
-        if (topic && kw && !matchCategory(kw) && !/^\d{4}$/.test(kw)) {
-            html += '<div class="sc-tip">校线只到<b>门类 / 一级学科</b>粒度，没有「' + esc(kw) + '」这一条；下面列的是该校 <b>' + esc(topic.cat) + '</b> 门类线，比专业线更粗。</div>';
-        }
-        html += '<div class="sc-tip">估算口径：录取最低分 ≈ 校线 + <b>' + LINE_GAP_MEDIAN + '</b> 分（2026 年 733 条「录取最低分 − 校线」的中位数）。' +
-            '校线只是<b>复试门槛</b>，热门专业实际录取往往远高于此，请把结果当作下限。</div>';
+        html += '<div class="sc-tip">估算口径：<b>专业线 + ' + GAP_MAJOR + ' 分</b>（有专业线的 ' + nMajor + ' 个），' +
+            '<b>校线 + ' + GAP_SCHOOL + ' 分</b>（只有门类校线的 ' + nSchool + ' 个）。' +
+            '依据是 198 个同校同专业样本「录取最低分 − 专业线」中位 5 分、四分之三在 14 分内；校线粒度更粗，所以补 '+ GAP_SCHOOL +' 分。' +
+            '两者都是<b>复试线换算</b>，热门专业实际录取可能更高。</div>';
 
         function card(x, isReach) {
             var L = x.L, diff = score - x.est;
             var overTxt = isReach ? '差 ' + (-diff) + ' 分' : (diff === 0 ? '刚好压线' : '高出 ' + diff + ' 分');
-            var sub = [L.politics, L.foreign_lang, L.subject1, L.subject2].filter(function (v) { return v; }).join('/');
+            var isM = x.src === 'major';
+            var sub = isM ? '' : [L.politics, L.foreign_lang, L.subject1, L.subject2].filter(function (v) { return v; }).join('/');
+            var title = isM
+                ? (L.major_code ? '<b>' + esc(L.major_code) + '</b> ' : '') + esc(L.major_name || '')
+                : '<b>' + esc(L.category || '') + '</b>' + (L.major_code ? ' ' + esc(L.major_code) : '') + ' 门类线';
             return '<div class="sc-card">' +
                 '<div class="sc-head"><span class="sc-school">' + esc(L.school) + '</span><span>' + esc(L.degree_type || '') + '</span></div>' +
-                '<div class="sc-major"><b>' + esc(L.category || '') + '</b>' + (L.major_code ? ' ' + esc(L.major_code) : '') +
-                (L.college ? '<span class="tag">' + esc(L.college) + '</span>' : '') + '</div>' +
+                '<div class="sc-major">' + title +
+                (L.college ? '<span class="tag">' + esc(L.college) + '</span>' : '') +
+                (L.study_mode ? '<span class="tag">' + esc(L.study_mode) + '</span>' : '') + '</div>' +
                 '<div class="sc-stats">' +
-                '<span>校线 <b>' + x.tot + '</b></span>' +
+                '<span>' + (isM ? '专业线' : '校线') + ' <b>' + x.tot + '</b></span>' +
                 '<span>估算录取 <b class="mid">' + x.est + '</b></span>' +
                 (sub ? '<span>单科 ' + esc(sub) + '</span>' : '') +
                 '<span class="sc-over' + (isReach ? ' reach' : '') + '">' + esc(overTxt) + '</span>' +
@@ -736,19 +793,19 @@ function renderScoreFallback(score, kw, list, meta) {
         }
 
         if (safe.length) {
-            html += '<div class="sc-sec">预估稳妥：按校线推算的录取分不高于你<span class="n">' + safe.length + ' 个</span></div>' +
+            html += '<div class="sc-sec">预估稳妥：按线换算的录取分不高于你<span class="n">' + safe.length + ' 个</span></div>' +
                 safe.slice(0, LIMIT).map(function (x) { return card(x, false); }).join('') +
-                (safe.length > LIMIT ? '<div class="sc-tip">还有 ' + (safe.length - LIMIT) + ' 个未显示，加个专业代码或门类关键词可以缩小范围。</div>' : '');
+                (safe.length > LIMIT ? '<div class="sc-tip">还有 ' + (safe.length - LIMIT) + ' 个未显示，加个专业名或专业代码可以缩小范围。</div>' : '');
         }
         if (reach.length) {
-            html += '<div class="sc-sec">预估可冲：推算录取分比你高，但差距在 ' + SCORE_BAND_UP + ' 分内<span class="n">' + reach.length + ' 个</span></div>' +
+            html += '<div class="sc-sec">预估可冲：换算录取分比你高，但差距在 ' + SCORE_BAND_UP + ' 分内<span class="n">' + reach.length + ' 个</span></div>' +
                 reach.slice(0, LIMIT).map(function (x) { return card(x, true); }).join('');
         }
         box.innerHTML = html;
     }).catch(function (err) {
-        console.warn('校线估算失败', err);
+        console.warn('线数据估算失败', err);
         box.innerHTML = '<div class="state-card"><span class="big">估算失败</span>' +
-            '<span class="desc">校线数据暂时取不到，稍后重试或直接搜索专业。</span></div>';
+            '<span class="desc">专业线/校线数据暂时取不到，稍后重试或直接搜索专业。</span></div>';
     });
 }
 
