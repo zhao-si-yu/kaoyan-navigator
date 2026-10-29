@@ -498,7 +498,7 @@ function snapshotDetail(parts) {
                 && parts[2] === r.major_code && parts[3] === r.major_name
                 && parts[4] === r.study_mode;
         }).sort(function (a, b) { return Number(b.year) - Number(a.year); });
-        return wrapDetail(parts.join('|'), hit);
+        return fillNotes(hit).then(function () { return wrapDetail(parts.join('|'), hit); });
     });
 }
 
@@ -536,17 +536,20 @@ function loadLines() {
         return linesCache;
     });
 }
-// 数据分片：manifest 里有 cols + 每个分片覆盖的学校，行是数组（省一半体积）
-var MF = null, SHARD_ROWS = {}, SHARD_TASK = {}, SNAP_TASK = null;
+// 数据分片：字符串走 dict.json（学校/学院/专业名…各存一份），
+// 分片里只放 id，体积是原来对象数组的 1/6；备注与原文链接拆到 n{i}.json 懒加载。
+var MF = null, DICT = null, SHARD_ROWS = {}, SHARD_TASK = {}, SNAP_TASK = null, NOTE_TASK = {};
 function loadManifest() {
     if (MF) return Promise.resolve(MF);
-    return fetch('data/shards/manifest.json').then(function (r) { return r.json(); }).then(function (m) {
-        MF = m;
-        return m;
-    });
+    return fetch('data/snap/m.json').then(function (r) { return r.json(); }).then(function (m) { MF = m; return m; });
 }
-function decodeRows(d, cols) {
-    var c = (d && d.c) || cols, rr = (d && d.r) || [], out = [];
+function loadDict() {
+    if (DICT) return Promise.resolve(DICT);
+    return fetch('data/snap/dict.json').then(function (r) { return r.json(); }).then(function (d) { DICT = d; return d; });
+}
+// admit.json 之类的「列名 + 行数组」格式
+function decodeColsRows(d) {
+    var c = (d && d.c) || [], rr = (d && d.r) || [], out = [];
     for (var i = 0; i < rr.length; i++) {
         var a = rr[i], o = {};
         for (var j = 0; j < c.length; j++) o[c[j]] = a[j];
@@ -554,13 +557,25 @@ function decodeRows(d, cols) {
     }
     return out;
 }
+function decodeShard(d, dict, m, si) {
+    var dc = m.d, nc = m.n, out = [], rr = (d && d.r) || [];
+    for (var i = 0; i < rr.length; i++) {
+        var a = rr[i], o = {};
+        for (var j = 0; j < dc.length; j++) o[dc[j]] = dict[dc[j]][a[j]] || '';
+        for (var k = 0; k < nc.length; k++) o[nc[k]] = a[dc.length + k] || '';
+        o.notes = ''; o.source_url = '';
+        o.__s = si; o.__i = i;
+        out.push(o);
+    }
+    return out;
+}
 function loadShard(i) {
     if (SHARD_ROWS[i]) return Promise.resolve(SHARD_ROWS[i]);
     if (SHARD_TASK[i]) return SHARD_TASK[i];
-    SHARD_TASK[i] = loadManifest().then(function (m) {
-        return fetch('data/shards/' + i + '.json').then(function (r) { return r.json(); })
+    SHARD_TASK[i] = Promise.all([loadManifest(), loadDict()]).then(function (r) {
+        return fetch('data/snap/s' + i + '.json').then(function (x) { return x.json(); })
             .then(function (d) {
-                var rows = decodeRows(d, m.cols);
+                var rows = decodeShard(d, r[1], r[0], i);
                 SHARD_ROWS[i] = rows;
                 return rows;
             });
@@ -575,9 +590,29 @@ function loadSchoolShard(school) {
         return null;
     });
 }
+function loadNotes(si) {
+    if (NOTE_TASK[si]) return NOTE_TASK[si];
+    NOTE_TASK[si] = fetch('data/snap/n' + si + '.json').then(function (r) { return r.json(); });
+    return NOTE_TASK[si];
+}
+// 详情页才需要的备注/链接，按分片 id 批量补齐
+function fillNotes(rows) {
+    var want = {}, keys = [];
+    rows.forEach(function (r) { if (r.__s != null && !want[r.__s]) { want[r.__s] = 1; keys.push(r.__s); } });
+    if (!keys.length) return Promise.resolve(rows);
+    return Promise.all(keys.map(loadNotes)).then(function (lists) {
+        var map = {};
+        keys.forEach(function (k, i) { map[k] = lists[i] || []; });
+        rows.forEach(function (r) {
+            var arr = map[r.__s];
+            if (arr && arr[r.__i]) { r.notes = arr[r.__i][0] || ''; r.source_url = arr[r.__i][1] || ''; }
+        });
+        return rows;
+    });
+}
 function snapTick(done, total) {
     var el = document.getElementById('snap-progress');
-    if (el) el.textContent = '正在加载数据 ' + done + '/' + total + ' 片';
+    if (el) el.textContent = '正在加载数据 ' + done + '/' + total + ' 片（首次约 10 秒）';
 }
 function loadSnapshot() {
     if (snapshot) return Promise.resolve(snapshot);
@@ -601,12 +636,12 @@ function loadSnapshot() {
     return SNAP_TASK;
 }
 
-// 按分数选校只需要「有录取分」的行，用 43KB(gzip) 的专用文件，不等 2.5MB 全量
+// 按分数选校只需要「有录取分」的行，用 43KB(gzip) 的专用文件，不等全量
 var ADMIT_CACHE = null;
 function loadAdmit() {
     if (ADMIT_CACHE) return Promise.resolve(ADMIT_CACHE);
     return fetch('data/admit.json').then(function (r) { return r.json(); }).then(function (d) {
-        ADMIT_CACHE = decodeRows(d, d.c);
+        ADMIT_CACHE = decodeColsRows(d);
         return ADMIT_CACHE;
     });
 }
