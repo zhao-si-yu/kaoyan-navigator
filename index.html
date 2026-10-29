@@ -490,7 +490,9 @@ function snapshotPage(kw, offset, size) {
     });
 }
 function snapshotDetail(parts) {
-    return loadSnapshot().then(function (rows) {
+    return loadSchoolShard(parts[0]).then(function (rows) {
+        return rows || loadSnapshot();
+    }).then(function (rows) {
         var hit = rows.filter(function (r) {
             return parts[0] === r.school && parts[1] === r.college
                 && parts[2] === r.major_code && parts[3] === r.major_name
@@ -534,10 +536,78 @@ function loadLines() {
         return linesCache;
     });
 }
-function loadSnapshot() {    if (snapshot) return Promise.resolve(snapshot);
-    return fetch('data/snapshot.json').then(function (res) { return res.json(); }).then(function (data) {
-        snapshot = data;
-        return snapshot;
+// 数据分片：manifest 里有 cols + 每个分片覆盖的学校，行是数组（省一半体积）
+var MF = null, SHARD_ROWS = {}, SHARD_TASK = {}, SNAP_TASK = null;
+function loadManifest() {
+    if (MF) return Promise.resolve(MF);
+    return fetch('data/shards/manifest.json').then(function (r) { return r.json(); }).then(function (m) {
+        MF = m;
+        return m;
+    });
+}
+function decodeRows(d, cols) {
+    var c = (d && d.c) || cols, rr = (d && d.r) || [], out = [];
+    for (var i = 0; i < rr.length; i++) {
+        var a = rr[i], o = {};
+        for (var j = 0; j < c.length; j++) o[c[j]] = a[j];
+        out.push(o);
+    }
+    return out;
+}
+function loadShard(i) {
+    if (SHARD_ROWS[i]) return Promise.resolve(SHARD_ROWS[i]);
+    if (SHARD_TASK[i]) return SHARD_TASK[i];
+    SHARD_TASK[i] = loadManifest().then(function (m) {
+        return fetch('data/shards/' + i + '.json').then(function (r) { return r.json(); })
+            .then(function (d) {
+                var rows = decodeRows(d, m.cols);
+                SHARD_ROWS[i] = rows;
+                return rows;
+            });
+    });
+    return SHARD_TASK[i];
+}
+function loadSchoolShard(school) {
+    return loadManifest().then(function (m) {
+        for (var i = 0; i < m.shards.length; i++) {
+            if (m.shards[i].schools.indexOf(school) !== -1) return loadShard(m.shards[i].i);
+        }
+        return null;
+    });
+}
+function snapTick(done, total) {
+    var el = document.getElementById('snap-progress');
+    if (el) el.textContent = '正在加载数据 ' + done + '/' + total + ' 片';
+}
+function loadSnapshot() {
+    if (snapshot) return Promise.resolve(snapshot);
+    if (SNAP_TASK) return SNAP_TASK;
+    SNAP_TASK = loadManifest().then(function (m) {
+        var acc = [], idx = 0, done = 0, total = m.shards.length;
+        function one() {
+            if (idx >= total) return Promise.resolve();
+            var k = m.shards[idx++].i;
+            return loadShard(k).then(function (rows) {
+                for (var i = 0; i < rows.length; i++) acc.push(rows[i]);
+                done++;
+                snapTick(done, total);
+                return one();
+            });
+        }
+        var w = [];
+        for (var p = 0; p < 6; p++) w.push(one());   // 6 并发
+        return Promise.all(w).then(function () { snapshot = acc; return snapshot; });
+    });
+    return SNAP_TASK;
+}
+
+// 按分数选校只需要「有录取分」的行，用 43KB(gzip) 的专用文件，不等 2.5MB 全量
+var ADMIT_CACHE = null;
+function loadAdmit() {
+    if (ADMIT_CACHE) return Promise.resolve(ADMIT_CACHE);
+    return fetch('data/admit.json').then(function (r) { return r.json(); }).then(function (d) {
+        ADMIT_CACHE = decodeRows(d, d.c);
+        return ADMIT_CACHE;
     });
 }
 
@@ -579,7 +649,7 @@ function scoreQuery(score, kw) {
                 return res.data || [];
             });
     }
-    return loadSnapshot().then(function (rows) {
+    return loadAdmit().then(function (rows) {
         return rows.filter(function (r) {
             if (toNumber(r.admitted_min) === null) return false;
             if (!k) return true;
@@ -936,7 +1006,7 @@ function renderIndex() {
         '<div class="entry" id="go-cmp"><span>对比清单</span><span class="arrow">›</span></div>' +
         '<div class="entry blue" id="go-fb"><span>数据反馈</span><span class="arrow">›</span></div></div>' +
         '<div class="data-hint">分数线按精度显示：<b>专业线</b>（院校按专业公布的总分线）→ <b>校线</b>（34 所自划线院校的校线，全量收录）→ <b>' + NL_YEAR + ' 年国家线</b>。研招网只公开<b>招生计划</b>与<b>考试科目</b>；2027 年线要 2027 年 3 月才发布。报录比仅院校自愿公布，多数为「—」。</div>' +
-        '<div id="results"><div class="state-card"><div class="spinner"></div><span class="big">正在查询…</span></div></div>' +
+        '<div id="results"><div class="state-card"><div class="spinner"></div><span class="big" id="snap-progress">正在查询…</span></div></div>' +
         '<div class="src-foot">' + (MODE === 'cloud'
             ? '数据来源：研招网硕士专业目录 · 实时云数据库<br>查不到的数据欢迎通过「数据反馈」提交'
             : '数据来源：研招网硕士专业目录 · 静态快照（定期更新）') + '</div>';

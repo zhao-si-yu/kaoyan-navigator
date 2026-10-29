@@ -1,2 +1,3 @@
 *.bak
 .DS_Store
+data/snapshot.json
